@@ -1,0 +1,21 @@
+// bar is just an empty module with some interesting ports.
+
+typedef struct packed {
+  logic [7:0] foo;
+  logic [7:0] bar;
+} word_t;
+
+module multiclock (
+  input word_t in_word,
+
+  input wire clk,
+  input wire reset_n,
+
+  input wire foo_clk,
+  input wire foo_reset_n,
+
+  input wire [31:0] in32,
+  output wire [31:0] foo_out32
+);
+
+endmodule

@@ -1,0 +1,104 @@
+// foo instantiates a bar
+
+module foo (
+  input wire clk,
+  input wire reset_n );
+
+/**AUTONET --warn **/
+/*PPSTART*/
+wire [`AXI_ADDR_WORD] axi_araddr;  // WARNING: zero load
+wire [`AXI_ID_WORD] axi_arid;  // WARNING: zero load
+wire [`AXI_LEN_WORD] axi_arlen;  // WARNING: zero load
+reg  axi_arready;  // WARNING: zero drivers
+wire  axi_arvalid;  // WARNING: zero load
+reg [`AXI_DATA256_WORD] axi_rdata;  // WARNING: zero drivers
+wire [`AXI_ID_WORD] axi_rid;
+reg  axi_rlast;  // WARNING: zero drivers
+wire  axi_rready;  // WARNING: zero load
+reg [`AXI_RESP_WORD] axi_rresp;  // WARNING: zero drivers
+reg  axi_rvalid;  // WARNING: zero drivers
+reg  backplane_clear_to_send;  // WARNING: zero drivers
+wire  backplane_ready_to_send;  // WARNING: zero load
+reg [`DATAFLOW2_COMMAND_WORD] control_input;  // WARNING: zero drivers
+wire [`DATAFLOW2_STATUS_WORD] control_output;  // WARNING: zero load
+wire [15:0] data_to_backplane;  // WARNING: zero load
+wire  data_to_backplane_valid;  // WARNING: zero load
+wire [31:0] in32;
+word_t in_word;  // WARNING: zero drivers
+wire [31:0] out32;  // WARNING: multiple drivers
+reg [`DATAFLOW2_COMMAND__SLOT_WIDTH-1:0] slot;  // WARNING: zero drivers
+reg  tbm_buffer_overflow;  // WARNING: zero drivers
+reg [`DATAFLOW2_STATUS__WRITE_POINTER_WIDTH-1:0] tbm_write_pointer;  // WARNING: zero drivers
+reg  tbm_write_pointer_valid;  // WARNING: zero drivers
+/*PPSTOP*/
+
+// this should disable the warning for axi_rid
+assign axi_rid = 5;
+
+/**INST bar.v u_bar1**/
+/*PPSTART*/
+bar u_bar1 (
+  .in_word (in_word),
+  .clk (clk),
+  .reset_n (reset_n),
+  .in32 (in32),
+  .out32 (out32)
+);
+/*PPSTOP*/
+
+/**INST bar.v u_bar2**/
+/*PPSTART*/
+bar u_bar2 (
+  .in_word (in_word),
+  .clk (clk),
+  .reset_n (reset_n),
+  .in32 (in32),
+  .out32 (out32)
+);
+/*PPSTOP*/
+
+/**INST bar.v u_bar_invert
+  .in32(out32)
+  .out32(in32)
+**/
+/*PPSTART*/
+bar u_bar_invert (
+  .in_word (in_word),
+  .clk (clk),
+  .reset_n (reset_n),
+  .in32 (out32),
+  .out32 (in32)
+);
+/*PPSTOP*/
+
+/**INST df2.v u_df2**/
+/*PPSTART*/
+dataflow2_controller u_df2 (
+  .clk (clk),
+  .reset_n (reset_n),
+  .slot (slot),
+  .control_input (control_input),
+  .control_output (control_output),
+  .backplane_ready_to_send (backplane_ready_to_send),
+  .backplane_clear_to_send (backplane_clear_to_send),
+  .data_to_backplane (data_to_backplane),
+  .data_to_backplane_valid (data_to_backplane_valid),
+  .axi_arid (axi_arid),
+  .axi_arready (axi_arready),
+  .axi_araddr (axi_araddr),
+  .axi_arlen (axi_arlen),
+  .axi_arvalid (axi_arvalid),
+  .axi_rid (axi_rid),
+  .axi_rresp (axi_rresp),
+  .axi_rvalid (axi_rvalid),
+  .axi_rdata (axi_rdata),
+  .axi_rlast (axi_rlast),
+  .axi_rready (axi_rready),
+  .tbm_buffer_overflow (tbm_buffer_overflow),
+  .tbm_write_pointer_valid (tbm_write_pointer_valid),
+  .tbm_write_pointer (tbm_write_pointer)
+);
+/*PPSTOP*/
+
+
+endmodule

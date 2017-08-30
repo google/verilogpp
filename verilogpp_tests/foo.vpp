@@ -1,0 +1,77 @@
+// foo instantiates a bar
+
+module foo (
+  input wire clk,
+  input wire reset_n );
+
+/**AUTONET**/
+/*PPSTART*/
+wire [`AXI_ADDR_WORD] axi_araddr;
+wire [`AXI_ID_WORD] axi_arid;
+wire [`AXI_LEN_WORD] axi_arlen;
+reg  axi_arready;
+wire  axi_arvalid;
+reg [`AXI_DATA256_WORD] axi_rdata;
+reg [`AXI_ID_WORD] axi_rid;
+reg  axi_rlast;
+wire  axi_rready;
+reg [`AXI_RESP_WORD] axi_rresp;
+reg  axi_rvalid;
+reg  backplane_clear_to_send;
+wire  backplane_ready_to_send;
+reg [`DATAFLOW2_COMMAND_WORD] control_input;
+wire [`DATAFLOW2_STATUS_WORD] control_output;
+wire [15:0] data_to_backplane;
+wire  data_to_backplane_valid;
+reg [31:0] in32;
+word_t in_word;
+wire [31:0] out32;
+reg [`DATAFLOW2_COMMAND__SLOT_WIDTH-1:0] slot;
+reg  tbm_buffer_overflow;
+reg [`DATAFLOW2_STATUS__WRITE_POINTER_WIDTH-1:0] tbm_write_pointer;
+reg  tbm_write_pointer_valid;
+/*PPSTOP*/
+
+
+/**INST bar.v u_bar**/
+/*PPSTART*/
+bar u_bar (
+  .in_word (in_word),
+  .clk (clk),
+  .reset_n (reset_n),
+  .in32 (in32),
+  .out32 (out32)
+);
+/*PPSTOP*/
+
+/**INST df2.v u_df2**/
+/*PPSTART*/
+dataflow2_controller u_df2 (
+  .clk (clk),
+  .reset_n (reset_n),
+  .slot (slot),
+  .control_input (control_input),
+  .control_output (control_output),
+  .backplane_ready_to_send (backplane_ready_to_send),
+  .backplane_clear_to_send (backplane_clear_to_send),
+  .data_to_backplane (data_to_backplane),
+  .data_to_backplane_valid (data_to_backplane_valid),
+  .axi_arid (axi_arid),
+  .axi_arready (axi_arready),
+  .axi_araddr (axi_araddr),
+  .axi_arlen (axi_arlen),
+  .axi_arvalid (axi_arvalid),
+  .axi_rid (axi_rid),
+  .axi_rresp (axi_rresp),
+  .axi_rvalid (axi_rvalid),
+  .axi_rdata (axi_rdata),
+  .axi_rlast (axi_rlast),
+  .axi_rready (axi_rready),
+  .tbm_buffer_overflow (tbm_buffer_overflow),
+  .tbm_write_pointer_valid (tbm_write_pointer_valid),
+  .tbm_write_pointer (tbm_write_pointer)
+);
+/*PPSTOP*/
+
+
+endmodule

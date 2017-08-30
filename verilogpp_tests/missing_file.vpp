@@ -1,0 +1,19 @@
+// Check the behavior of INST when a file is missing.  verilogpp should both
+// not die, and also should produce useful error messages.
+
+module foo (
+  input wire clk,
+  input wire reset_n );
+
+/**AUTONET**/
+/*PPSTART*/
+
+/*PPSTOP*/
+
+/**INST this_file_does_not_exist.v u_bar**/
+/*PPSTART*/
+ERROR: Could not read this_file_does_not_exist.v: No such file or directory
+ERROR: Can not instantiate without module definition.
+/*PPSTOP*/
+
+endmodule

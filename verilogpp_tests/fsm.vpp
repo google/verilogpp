@@ -1,0 +1,82 @@
+/**FSM fsm_1
+  IDLE -> FOO
+  FOO -> BAR if ready
+  BAR -> IDLE
+**/
+/*PPSTART*/
+typedef enum {
+  FSM_1_IDLE,
+  FSM_1_FOO,
+  FSM_1_BAR
+} fsm_1_state_t;
+fsm_1_state_t fsm_1_state = FSM_1_IDLE, fsm_1_next;
+
+always @* begin
+  case (fsm_1_state)
+      FSM_1_IDLE: begin
+          fsm_1_next = FSM_1_FOO;
+        end
+      FSM_1_FOO: begin
+          if (ready) fsm_1_next = FSM_1_BAR;
+          else
+          fsm_1_next = FSM_1_FOO;
+        end
+      FSM_1_BAR: begin
+          fsm_1_next = FSM_1_IDLE;
+        end
+      default:
+        fsm_1_next = FSM_1_IDLE;
+  endcase
+end
+
+always @(posedge clk) begin
+  if (!reset_n) begin
+    fsm_1_state <= #1ns FSM_1_IDLE;
+  end else begin
+    fsm_1_state <= #1ns fsm_1_next;
+  end
+end
+
+/*PPSTOP*/
+
+
+/**FSM fsm_2  --enum
+  IDLE -> FOO
+  FOO -> BAR if ready
+  BAR -> IDLE
+**/
+/*PPSTART*/
+typedef enum {
+  FSM_2_IDLE,
+  FSM_2_FOO,
+  FSM_2_BAR
+} fsm_2_state_t;
+fsm_2_state_t fsm_2_state = FSM_2_IDLE, fsm_2_next;
+
+always @* begin
+  case (fsm_2_state)
+      FSM_2_IDLE: begin
+          fsm_2_next = FSM_2_FOO;
+        end
+      FSM_2_FOO: begin
+          if (ready) fsm_2_next = FSM_2_BAR;
+          else
+          fsm_2_next = FSM_2_FOO;
+        end
+      FSM_2_BAR: begin
+          fsm_2_next = FSM_2_IDLE;
+        end
+      default:
+        fsm_2_next = FSM_2_IDLE;
+  endcase
+end
+
+always @(posedge clk) begin
+  if (!reset_n) begin
+    fsm_2_state <= #1ns FSM_2_IDLE;
+  end else begin
+    fsm_2_state <= #1ns fsm_2_next;
+  end
+end
+
+/*PPSTOP*/

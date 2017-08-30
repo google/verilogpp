@@ -1,0 +1,56 @@
+// foo instantiates a bar
+
+module autocb_test();
+
+/**AUTONET --init --cb --mark **/
+/*PPSTART*/
+/**/ reg  foo_clk = '0;
+/**/ wire [31:0] foo_out32;
+/**/ reg  foo_reset_n = '0;
+/**/ reg [31:0] in32 = '0;
+/**/ word_t in_word = '0;
+/**/
+/**/ // foo_cb: Clocking block for use by drivers.
+/**/ clocking foo_cb @(posedge foo_clk);
+/**/   default input #1step output #1;
+/**/   input foo_out32;
+/**/   output foo_reset_n;
+/**/ endclocking
+/**/
+/**/ // foo_mcb: Clocking block for use by monitors.
+/**/ clocking foo_mcb @(posedge foo_clk);
+/**/   default input #1step output #1;
+/**/   input foo_out32;
+/**/   input foo_reset_n;
+/**/ endclocking
+/**/
+/**/ // cb: Clocking block for use by drivers.
+/**/ clocking cb @(posedge clk);
+/**/   default input #1step output #1;
+/**/   output in32;
+/**/   output in_word;
+/**/ endclocking
+/**/
+/**/ // mcb: Clocking block for use by monitors.
+/**/ clocking mcb @(posedge clk);
+/**/   default input #1step output #1;
+/**/   input in32;
+/**/   input in_word;
+/**/ endclocking
+/*PPSTOP*/
+
+
+/**INST multiclock.v dut**/
+/*PPSTART*/
+multiclock dut (
+  .in_word (in_word),
+  .clk (clk),
+  .reset_n (reset_n),
+  .foo_clk (foo_clk),
+  .foo_reset_n (foo_reset_n),
+  .in32 (in32),
+  .foo_out32 (foo_out32)
+);
+/*PPSTOP*/
+
+endmodule

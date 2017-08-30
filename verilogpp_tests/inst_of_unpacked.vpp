@@ -1,0 +1,44 @@
+// inst_of_unpacked instantiates an unpacked from unpacked.v
+
+module inst_of_unpacked (
+  input wire clk,
+  input wire reset_n );
+
+/**AUTONET --init **/
+/*PPSTART*/
+wire [7:0] bar;
+reg [7:0] fee [0:10-1] = '{default: '0};
+reg  fee_en [0:10-1] = '{default: '0};
+reg [7:0] foo [0:5] = '{default: '0};
+reg  foo_en [0:5] = '{default: '0};
+/*PPSTOP*/
+
+
+/**INST unpacked.v u_unpacked **/
+/*PPSTART*/
+unpacked u_unpacked (
+  .clk (clk),
+  .reset_n (reset_n),
+  .foo (foo),
+  .foo_en (foo_en),
+  .bar (bar)
+);
+/*PPSTOP*/
+
+/**INST unpackedN.v u_unpackedN
+parameter N 10
+s/^foo/fee/;
+**/
+/*PPSTART*/
+unpackedN #(
+  .N(10)) u_unpackedN (
+  .clk (clk),
+  .reset_n (reset_n),
+  .foo (fee),
+  .foo_en (fee_en),
+  .bar (bar)
+);
+/*PPSTOP*/
+
+
+endmodule

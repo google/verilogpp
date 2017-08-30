@@ -1,0 +1,47 @@
+// foo instantiates a bar
+
+/**INST \
+   bar.v \
+   u_bar**/
+/*PPSTART*/
+bar u_bar (
+  .in_word (in_word),
+  .clk (clk),
+  .reset_n (reset_n),
+  .in32 (in32),
+  .out32 (out32)
+);
+/*PPSTOP*/
+
+/**INST \
+df2.v u_df2**/
+/*PPSTART*/
+dataflow2_controller u_df2 (
+  .clk (clk),
+  .reset_n (reset_n),
+  .slot (slot),
+  .control_input (control_input),
+  .control_output (control_output),
+  .backplane_ready_to_send (backplane_ready_to_send),
+  .backplane_clear_to_send (backplane_clear_to_send),
+  .data_to_backplane (data_to_backplane),
+  .data_to_backplane_valid (data_to_backplane_valid),
+  .axi_arid (axi_arid),
+  .axi_arready (axi_arready),
+  .axi_araddr (axi_araddr),
+  .axi_arlen (axi_arlen),
+  .axi_arvalid (axi_arvalid),
+  .axi_rid (axi_rid),
+  .axi_rresp (axi_rresp),
+  .axi_rvalid (axi_rvalid),
+  .axi_rdata (axi_rdata),
+  .axi_rlast (axi_rlast),
+  .axi_rready (axi_rready),
+  .tbm_buffer_overflow (tbm_buffer_overflow),
+  .tbm_write_pointer_valid (tbm_write_pointer_valid),
+  .tbm_write_pointer (tbm_write_pointer)
+);
+/*PPSTOP*/
+
+
+endmodule

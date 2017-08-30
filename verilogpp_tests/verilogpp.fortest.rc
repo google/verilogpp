@@ -1,0 +1,20 @@
+# verilogpp configuration file
+# author: jonmayer@google.com
+
+systemverilog = 1  # vivado supports systemverilog
+extension_selects_language = 1  # use file extension to select between v2k/sv
+clock = clk
+reset_n = reset_n
+synchronous_reset = 1  # xilinx recommends synchronous reset
+use_perforce = 0
+register_delay = ""
+enable_footer = 0
+generated_code_marker = ""
+
+# force always_ff to be disabled in preprocessor generated code until
+# Xilinx/Cadence discrepancy for initialized registers is resolved.
+# TODO(jonmayer): re-enable once we have a solution in place.
+disable_always_ff = 1
+
+manifest=./preproc.manifest
+

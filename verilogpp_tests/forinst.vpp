@@ -1,0 +1,119 @@
+/**FORINST bus_keeper.v keeper 1 2 3
+  s/NNN/${enumerator}/g;
+**/
+/*PPSTART*/
+bus_keeper keeper_1 (
+  .clk (clk),
+  .reset_n (reset_n),
+  .busNNN_valid (bus1_valid),
+  .busNNN_in (bus1_in),
+  .busNNN_out (bus1_out)
+);
+bus_keeper keeper_2 (
+  .clk (clk),
+  .reset_n (reset_n),
+  .busNNN_valid (bus2_valid),
+  .busNNN_in (bus2_in),
+  .busNNN_out (bus2_out)
+);
+bus_keeper keeper_3 (
+  .clk (clk),
+  .reset_n (reset_n),
+  .busNNN_valid (bus3_valid),
+  .busNNN_in (bus3_in),
+  .busNNN_out (bus3_out)
+);
+/*PPSTOP*/
+
+/**FORINST bus_keeper.v keeper alpha beta gamma
+  s/NNN/${enumerator}/g;
+**/
+/*PPSTART*/
+bus_keeper keeper_alpha (
+  .clk (clk),
+  .reset_n (reset_n),
+  .busNNN_valid (busalpha_valid),
+  .busNNN_in (busalpha_in),
+  .busNNN_out (busalpha_out)
+);
+bus_keeper keeper_beta (
+  .clk (clk),
+  .reset_n (reset_n),
+  .busNNN_valid (busbeta_valid),
+  .busNNN_in (busbeta_in),
+  .busNNN_out (busbeta_out)
+);
+bus_keeper keeper_gamma (
+  .clk (clk),
+  .reset_n (reset_n),
+  .busNNN_valid (busgamma_valid),
+  .busNNN_in (busgamma_in),
+  .busNNN_out (busgamma_out)
+);
+/*PPSTOP*/
+
+
+/**FORINST bus_keeper.v keeper 0:2:8
+  s/NNN/${enumerator}/g;
+**/
+/*PPSTART*/
+bus_keeper keeper_0 (
+  .clk (clk),
+  .reset_n (reset_n),
+  .busNNN_valid (bus0_valid),
+  .busNNN_in (bus0_in),
+  .busNNN_out (bus0_out)
+);
+bus_keeper keeper_2 (
+  .clk (clk),
+  .reset_n (reset_n),
+  .busNNN_valid (bus2_valid),
+  .busNNN_in (bus2_in),
+  .busNNN_out (bus2_out)
+);
+bus_keeper keeper_4 (
+  .clk (clk),
+  .reset_n (reset_n),
+  .busNNN_valid (bus4_valid),
+  .busNNN_in (bus4_in),
+  .busNNN_out (bus4_out)
+);
+bus_keeper keeper_6 (
+  .clk (clk),
+  .reset_n (reset_n),
+  .busNNN_valid (bus6_valid),
+  .busNNN_in (bus6_in),
+  .busNNN_out (bus6_out)
+);
+bus_keeper keeper_8 (
+  .clk (clk),
+  .reset_n (reset_n),
+  .busNNN_valid (bus8_valid),
+  .busNNN_in (bus8_in),
+  .busNNN_out (bus8_out)
+);
+/*PPSTOP*/
+
+/**FORINST bus_keeper.v keeper
+  alpha
+  beta
+  -----
+  s/busNNN_valid/valid_${enumerator}/;
+  s/NNN/${enumerator}/g;
+**/
+/*PPSTART*/
+bus_keeper keeper_alpha (
+  .clk (clk),
+  .reset_n (reset_n),
+  .busNNN_valid (valid_alpha),
+  .busNNN_in (busalpha_in),
+  .busNNN_out (busalpha_out)
+);
+bus_keeper keeper_beta (
+  .clk (clk),
+  .reset_n (reset_n),
+  .busNNN_valid (valid_beta),
+  .busNNN_in (busbeta_in),
+  .busNNN_out (busbeta_out)
+);
+/*PPSTOP*/

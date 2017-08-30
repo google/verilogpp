@@ -1,0 +1,90 @@
+// test
+
+typedef struct packed {
+  logic [7:0] foo;
+  logic bar;
+  reg [127:0] zap;
+} foobarzap;
+
+typedef struct packed {
+  logic [7:0] fee;
+  logic fie;
+  reg [127:0] foe;
+} feefiefoe;
+
+struct {
+  logic [7:0] a;
+  logic b;
+  logic [3:0] _unused_0; // should be filtered out.
+  reg [127:0] c;
+} abc;
+
+/**AUTOTOSTRING**/
+/*PPSTART*/
+function string abc_ToString(abc value);
+  return {
+    "abc{",
+    $sformatf("a=%x,", value.a),
+    $sformatf("b=%x,", value.b),
+    $sformatf("c=%x", value.c),
+    "}"
+  };
+endfunction
+
+function string abc_ToJSON(
+    abc value,
+    string sep = "\n    ");
+  return {
+    "{", sep,
+    $sformatf("\"a\": %d,", value.a), sep,
+    $sformatf("\"b\": %d,", value.b), sep,
+    $sformatf("\"c\": %d", value.c), sep,
+    "}"
+  };
+endfunction
+
+function string feefiefoe_ToString(feefiefoe value);
+  return {
+    "feefiefoe{",
+    $sformatf("fee=%x,", value.fee),
+    $sformatf("fie=%x,", value.fie),
+    $sformatf("foe=%x", value.foe),
+    "}"
+  };
+endfunction
+
+function string feefiefoe_ToJSON(
+    feefiefoe value,
+    string sep = "\n    ");
+  return {
+    "{", sep,
+    $sformatf("\"fee\": %d,", value.fee), sep,
+    $sformatf("\"fie\": %d,", value.fie), sep,
+    $sformatf("\"foe\": %d", value.foe), sep,
+    "}"
+  };
+endfunction
+
+function string foobarzap_ToString(foobarzap value);
+  return {
+    "foobarzap{",
+    $sformatf("foo=%x,", value.foo),
+    $sformatf("bar=%x,", value.bar),
+    $sformatf("zap=%x", value.zap),
+    "}"
+  };
+endfunction
+
+function string foobarzap_ToJSON(
+    foobarzap value,
+    string sep = "\n    ");
+  return {
+    "{", sep,
+    $sformatf("\"bar\": %d,", value.bar), sep,
+    $sformatf("\"foo\": %d,", value.foo), sep,
+    $sformatf("\"zap\": %d", value.zap), sep,
+    "}"
+  };
+endfunction
+
+/*PPSTOP*/

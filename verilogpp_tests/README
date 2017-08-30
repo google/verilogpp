@@ -1,0 +1,7 @@
+The files in this directory are used by the verilogpp_tests.t test.
+
+All files with .vpp extensions are processed by the preprocessor to
+produce a .v file.  The generated .v output should be identical to
+the .vpp file that was used to generate it (verilogpp will strip out
+all generated code and regenerate from macros).
+

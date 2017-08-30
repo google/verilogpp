@@ -1,0 +1,26 @@
+// foo instantiates a bar
+
+module foo (
+  input wire clk,
+  input wire reset_n );
+
+/**AUTONET**/
+/*PPSTART*/
+reg signed [7:0] [7:0] bar;
+reg signed [7:0] foo;
+my_struct_s mine;
+/*PPSTOP*/
+
+
+/**INST signed_thing.v u_signed_thing**/
+/*PPSTART*/
+signed_thing u_signed_thing (
+  .clk (clk),
+  .reset_n (reset_n),
+  .mine (mine),
+  .foo (foo),
+  .bar (bar)
+);
+/*PPSTOP*/
+
+endmodule

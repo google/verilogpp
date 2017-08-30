@@ -1,0 +1,46 @@
+module test(input logic i);
+
+typedef struct packed {
+  logic [7:0] x;
+  logic [7:0] y;
+} coordinate_t;
+
+/**AUTONET**/
+/*PPSTART*/
+reg [10-1:0] i_10;
+reg [20-1:0] i_20;
+reg [30-1:0] i_30;
+coordinate_t i_coordinate;
+/*PPSTOP*/
+
+/**FORINST busthing.v thing 10 20 30
+  parameter WIDTH ${enumerator}
+  s/^i$/i_${enumerator}/;
+**/
+/*PPSTART*/
+busthing #(
+  .WIDTH(10)) thing_10 (
+  .i (i_10)
+);
+busthing #(
+  .WIDTH(20)) thing_20 (
+  .i (i_20)
+);
+busthing #(
+  .WIDTH(30)) thing_30 (
+  .i (i_30)
+);
+/*PPSTOP*/
+
+/**INST busthing.v coordinate_bus
+  parameter WIDTH $bits(coordinate_t)
+  .i(i_coordinate)
+**/
+/*PPSTART*/
+busthing #(
+  .WIDTH($bits(coordinate_t))) coordinate_bus (
+  .i (i_coordinate)
+);
+/*PPSTOP*/
+
+endmodule

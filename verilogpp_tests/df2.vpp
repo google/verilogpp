@@ -1,0 +1,45 @@
+// an example of a "hard to parse" module interface
+
+module dataflow2_controller  (
+  // System Signals
+  input wire                                    clk,
+  input wire                                    reset_n,
+
+// Endpoint command/status interface
+  input wire  [`DATAFLOW2_COMMAND__SLOT_WIDTH-1:0]  slot,
+  input wire  [`DATAFLOW2_COMMAND_WORD]         control_input,
+  output wire [`DATAFLOW2_STATUS_WORD]          control_output,
+
+  // data interface to aurora backplane connection
+  // RTS is sent to the backplane requesting a 'packet' transmission
+  // CTS is returned as a single cycle grant pulse, indicating that its ready
+  //  to receive a packet-sized burst of data.
+  `CS_DF2 output reg                            backplane_ready_to_send = 0,
+  `CS_DF2 input wire                            backplane_clear_to_send,
+  `CS_DF2 output reg  [15:0]                    data_to_backplane = 0,
+  `CS_DF2 output reg                            data_to_backplane_valid = 0,
+
+// Master AXI read address channel signals
+  `CS_DF2 output wire [`AXI_ID_WORD]            axi_arid,
+  `CS_DF2 input wire                            axi_arready,
+  `CS_DF2 output wire [`AXI_ADDR_WORD]          axi_araddr,
+          output wire [`AXI_LEN_WORD]           axi_arlen,
+  `CS_DF2 output reg                            axi_arvalid = 0,
+
+// Master AXI read data channel signals
+  `CS_DF2 input wire  [`AXI_ID_WORD]            axi_rid,
+          input wire  [`AXI_RESP_WORD]          axi_rresp,
+  `CS_DF2 input wire                            axi_rvalid,
+  `CS_DF2 input wire  [`AXI_DATA256_WORD]       axi_rdata,
+  `CS_DF2 input wire                            axi_rlast,
+  `CS_DF2 output reg                            axi_rready = 0,
+
+// Transmit Buffer Manager inputs
+          input wire                                                tbm_buffer_overflow,
+          input wire                                                tbm_write_pointer_valid,
+          input wire  [`DATAFLOW2_STATUS__WRITE_POINTER_WIDTH-1:0]  tbm_write_pointer
+);
+
+whatever
+
+endmodule

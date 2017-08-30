@@ -1,0 +1,3145 @@
+#!/usr/bin/perl -w
+#
+# Copyright 2008 Google Inc. All Rights Reserved.
+# Author: jonmayer@google.com (Jonathan Mayer)
+#
+# a verilog pre-processor
+
+use strict;
+use warnings;
+use 5.8.0;
+use English qw( -no_match_vars );
+use File::Spec;
+use FileHandle;
+use Getopt::Long;
+use POSIX ();
+no warnings "redefine";  # for Cwd
+use Cwd;
+
+###################################
+# main
+###################################
+
+package main;
+
+# globals for commandline options:
+our $help = 0;
+our $HELP = 0;
+our $mdhelp = 0;
+our $verbose = 0;
+our $quieter = 0;
+our $trim = 0;
+our $recursive = 0;
+our @INCDIR = ( $ENV{'PWD'} );
+our $configfile = "";
+our $explicit_outputfile = "";
+our $check = 0;  # just check if changes are needed (dry run)
+
+# globals for configuration
+our %config;
+$config{"clock"} = "clk";
+$config{"reset_n"} = "rst_n";
+$config{"synchronous_reset"} = 0;
+$config{"path"} = "";
+# this flag may be overriden if "extension_selects_language" is used.
+$config{"systemverilog"} = 1;
+# if set, .v and .vh files are regenerated using verilog2K syntax, and .sv and
+# .svh files are regenerated using SystemVerilog syntax.
+$config{"extension_selects_language"} = 0;
+$config{"disable_always_ff"} = 0;  # disable always_ff in systemverilog code.
+$config{"use_perforce"} = 0;
+$config{"register_delay"} = "#1ns";
+$config{"autonet_allwires"} = 0;
+$config{"prettyprint"} = 0; # Set to enable "pretty" generated code
+$config{"fsm_state_suffix"} = ""; # String appended to state signals
+$config{"enable_footer"} = 1;  # writes a timestamp comment at end of each file
+$config{"depend_mode"} = 0;  # generate a dependency comment instead of `include.
+$config{"generated_code_marker"} = "";  # extra indicator for generated text
+$config{"manifest"} = "";  # if set, update a manifest file when files are
+                           # reprocessed.
+$config{"enum_states"} = 1;  # enumerate states by default
+
+# global md5sum registry
+our $manifest = undef;
+
+# globals for inter-macro communication:
+our %PROCESSED = ();
+
+# global constants
+our $k_condition_list = "**| CONDITION LIST |**";
+
+# helper functions to return the proper verilog or systemverilog
+# constructs
+sub always_comb() {
+  return $config{"systemverilog"} ? "always_comb" : "always @*";
+}
+
+sub always_ff() {
+  return "always" if $config{"disable_always_ff"};
+  return $config{"systemverilog"} ? "always_ff" : "always";
+}
+
+sub case() {
+  return $config{"systemverilog"} ? "unique case" : "case";
+}
+
+# returns a correctly constructed, inferred register.
+sub register {
+  my (%options) = @_;
+  my $reg = $options{"REG"} || die;
+  my $next = $options{"NEXT"} || die;
+  my $cond = $options{"CONDITION"} || "1'b1";
+  my $initial = $options{"INITIAL"} || "'d0";
+  my $clk = $options{"CLOCK"} || $config{"clock"};
+  my $reset_n =$options{"RESET_N"} || $config{"reset_n"};
+  my $delay = $options{"DELAY"} || $config{"register_delay"};
+
+  my $ifclause = "";
+  if ($cond ne "1'b1") {
+    $ifclause = "if (${cond}) ";
+  }
+
+  if ($delay eq "none") { $delay = ""; }
+  else { $delay =~ s/\s*$/ /; }
+
+  return join("",
+      always_ff(),
+      " @(posedge ${clk}",
+      ($config{"synchronous_reset"}
+          ? ""
+          : " or negedge ${reset_n}"),
+      ") begin\n",
+      "  if (!${reset_n}) begin\n",
+      "    ${reg} <= ${delay}${initial};\n",
+      "  end else ${ifclause}begin\n",
+      "    ${reg} <= ${delay}${next};\n",
+      "  end\n",
+      "end\n");
+}
+
+# quick utility to wrap lines, because Text::Wrap::Simple isn't installed.
+sub wrap {
+  my $line = shift;
+  my $delim = shift;
+  my $break = shift;
+  my $len = shift || 78;
+
+  $line =~ s/[\r\n]+/ /sg;
+  my @lines = $line =~ m/(.{1,${len}})(?:(?:[${delim}]\s*)|$)/g;
+  @lines = map { s/\s*$//; $_; } @lines;
+  $line = join($break, @lines);
+
+  return $line;
+}
+
+# TabularAlign formats a 2D array of words in a tabular format.
+# Args:
+#    $aref is reference to a 2D array (array of array references).
+#    $linesep is a string to use the join rows together.
+sub TabularAlign($$) {
+  my $aref = shift;
+  my $linesep = shift;
+
+  my @widths = ();
+  sub max($$) {
+    my $a = shift;
+    my $b = shift;
+    if (!defined($a)) { $a = 0; }
+    return ($a < $b) ? $b : $a;
+  }
+  foreach my $row (@$aref) {
+    @widths = map {
+        max($widths[$_], length($row->[$_]))
+    } 0..$#$row;
+  }
+
+  my $format = join(" ", map {"%-" . $_ . "s"} @widths);
+  my @text = map {
+    my $a = sprintf($format, @$_);
+    $a =~ s/\s+$//;  # strip whitespace from the end
+    $a;
+  } @$aref;
+  return join($linesep, @text)
+}
+
+sub starts_with {
+  my $string = shift;
+  my $prefix = shift;
+  my $l = length($prefix);
+  return (substr($string, 0, $l) eq $prefix);
+}
+
+
+###################################
+package Object;
+###################################
+
+# construct a new Object
+sub new {
+  my $proto = shift;
+  my $class = ref($proto) || $proto;
+  my $self = {};
+  bless($self, $class);
+  $self->init(@_);
+  return $self;
+}
+
+sub init {}
+
+sub clone {
+  my $self = shift;
+  my $clone = { %$self };  # override if we need a deep copy
+  bless ($clone, ref($self));
+  return $clone;
+}
+
+###################################
+package Manifest;
+our @ISA = qw/ Object /;
+###################################
+
+sub init {
+  my $self = shift;
+  $self->{manifest_path} = shift;
+  $self->{checksums} = {};
+
+  my $fh = new FileHandle("<$self->{manifest_path}")
+    or warn("Could not read manifest: $self->{manifest_path}");
+  if ($fh) {
+    while (my $line = <$fh>) {
+      chomp($line);
+      # skip merge artifacts: merged data gets automatically
+      # fixed when re-export takes place.
+      next if ($line =~ m/^(<<<<<<)|(=====)|(>>>>>>)/);
+      my @a = split(' ', $line);
+      if ($#a == 1) {
+        $self->{checksums}->{$a[1]} = $a[0];
+      } else {
+        print STDERR "Ignored manifest line: $line\n";
+      }
+    }
+    $fh->close();
+  }
+
+  # always ensure verilogpp is in the manifest:
+  $self->UpdateManifest($0);
+}
+
+sub UpdateManifest {
+  my $self = shift;
+  my $file = shift;
+
+  # TODO(jonmayer): remove these when check_preproc is fixed.
+  return if ($file =~ m/\/vivado_ip/);
+  return if ($file =~ m/\/third_party/);
+
+  my $relpath = File::Spec->abs2rel($file);
+
+  my $output = `md5sum $relpath`;
+  my ($checksum) = ($output =~ m/^(\S+)/);
+  $self->{checksums}->{$relpath} = $checksum;
+}
+
+sub RewriteManifest {
+  my $self= shift;
+
+  if ($main::config{"use_perforce"}) {
+    system("/usr/bin/g4", "edit", $self->{manifest_path});
+  }
+
+  my $fh = new FileHandle(">$self->{manifest_path}")
+    or die("Could not write manifest: $self->{manifest_path}");
+  foreach my $file (sort keys %{$self->{checksums}}) {
+    print $fh $self->{checksums}->{$file},"  ",$file,"\n";
+  }
+  $fh->close();
+}
+
+###################################
+package SignalSet;
+our @ISA = qw/ Object /;
+###################################
+
+sub init {
+  my $self = shift;
+  $self->{signals} = [];
+}
+
+sub AddSignal {
+  my $self = shift;
+  my $signal = shift;
+  my $direction = shift;
+  push(@{$self->{signals}}, [$signal, $direction]);
+}
+
+sub DivideByPrefix {
+  my $self = shift;
+  my $prefix = shift;
+  my $in_set = shift;
+  my $out_set = shift;
+
+  foreach my $sig_and_dir (@{$self->{signals}}) {
+    if (main::starts_with($sig_and_dir->[0], $prefix)) {
+      $in_set->AddSignal($sig_and_dir->[0], $sig_and_dir->[1]);
+    } else {
+      $out_set->AddSignal($sig_and_dir->[0], $sig_and_dir->[1]);
+    }
+  }
+}
+
+sub PrintClockingBlock {
+  # Print a clocking block based on the signals in-set.
+  my $self = shift;
+  my $prefix = shift;
+  # produce clocking block
+  print "\n";
+  print "// ${prefix}cb: Clocking block for use by drivers.\n";
+  print "clocking ${prefix}cb @(posedge ${prefix}clk);\n";
+  print "  default input #1step output #1;\n";
+  foreach my $sig_and_dir (@{$self->{signals}}) {
+    print "  $sig_and_dir->[1] $sig_and_dir->[0];\n";
+  }
+  print "endclocking\n";
+  print "\n";
+  print "// ${prefix}mcb: Clocking block for use by monitors.\n";
+  print "clocking ${prefix}mcb @(posedge ${prefix}clk);\n";
+  print "  default input #1step output #1;\n";
+  foreach my $sig_and_dir (@{$self->{signals}}) {
+    print "  input $sig_and_dir->[0];\n";
+  }
+  print "endclocking\n";
+}
+
+###################################
+package PortSpec;
+our @ISA = qw/ Object /;
+###################################
+
+# arguments: signal name, direction, and width
+sub init {
+  my $self = shift;
+  $self->{name} = shift;
+  $self->{direction} = shift;
+  $self->{width} = shift;
+  $self->{unpacked} = undef;
+}
+
+sub name($) {
+  my $self = shift;
+  return $self->{name};
+}
+
+sub io($) {
+  my $self = shift;
+  return $self->{direction};
+}
+
+sub width($) {
+  my $self = shift;
+  return $self->{width};
+}
+
+sub set_unpacked($$) {
+  my $self = shift;
+  $self->{unpacked} = shift;
+}
+
+sub unpacked($) {
+  my $self = shift;
+  return $self->{unpacked};
+}
+
+sub AsNet($$$) {
+  my $self = shift;
+  my $mapped_signal = shift;
+  my $mapper = shift;
+  my $width = $self->{width};
+  my $unpacked = [];
+  if (defined($self->{unpacked})) {
+    $unpacked = [ @{$self->{unpacked}} ];
+  }
+  # expand any Parameters within the $width expression:
+  foreach my $key (keys %{$mapper->{PARAMS}}) {
+    $width =~ s/\b${key}\b/$mapper->{PARAMS}->{$key}/g;
+    for (my $i = 0; $i <= $#{$unpacked}; $i++) {
+      $unpacked->[$i] =~ s/\b${key}\b/$mapper->{PARAMS}->{$key}/g;
+    }
+  }
+  my $n = new Net($mapped_signal, $width);
+  if ($#{$unpacked} >= 0) {
+    $n->set_unpacked($unpacked);
+  }
+  return $n;
+}
+
+###################################
+package StructSpec;
+our @ISA = qw/ Object /;
+# StructSpec keeps track of the contents of a SystemVerilog struct.
+###################################
+
+sub init {
+  my $self = shift;
+  my $name = shift;
+  $self->{name} = $name;
+  $self->{fields} = [@_];
+}
+
+sub AddField($$) {
+  my $self = shift;
+  my $name = shift;
+  push(@{$self->{fields}}, $name);
+}
+
+sub GenerateToStringFunction($) {
+  my $self = shift;
+  my $name = $self->{name};
+
+  my $formatstr = $name . "("
+    . join(", ", @{$self->{fields}})
+    . ")";
+
+  print "function string ${name}_ToString(${name} value);\n";
+  print "  return {\n";
+  print "    \"${name}{\",\n";
+  my @fields = grep {!/^_unused/} @{$self->{fields}};
+  for (my $i = 0; $i <= $#fields; $i++) {
+    my $field = $fields[$i];
+    my $sep = ($i == $#fields) ? "" : ",";
+    print "    \$sformatf(\"${field}=\%x${sep}\", value.${field}),\n";
+  }
+  print "    \"}\"\n";
+  print "  };\n";
+  print "endfunction\n";
+  print "\n";
+
+  @fields = sort @fields;
+  print "function string ${name}_ToJSON(\n" .
+        "    ${name} value,\n" .
+        "    string sep = \"\\n    \");\n";
+  print "  return {\n";
+  print "    \"{\", sep,\n";
+  for (my $i = 0; $i <= $#fields; $i++) {
+    my $field = $fields[$i];
+    my $comma = ($i == $#fields) ? "" : ",";
+    print "    \$sformatf(\"\\\"${field}\\\": \%d${comma}\"," .
+          " value.${field}), sep,\n";
+  }
+  print "    \"}\"\n";
+  print "  };\n";
+  print "endfunction\n";
+  print "\n";
+}
+
+###################################
+package ModuleSpec;
+our @ISA = qw/ Object /;
+###################################
+
+sub init {
+  my $self = shift;
+  $self->{ports} = {};
+  $self->{port_order} = [];
+  $self->{filename} = '';
+  $self->{assigns} = {};  # tracks assign statements
+  $self->{structs} = {};
+}
+
+sub GetPortByName($$) {
+  my $self = shift;
+  my $portname = shift;
+  if (exists $self->{ports}->{$portname}) {
+    return $self->{ports}->{$portname};
+  }
+  die("Unknown port: $portname");
+}
+
+sub HasPort($$) {
+  my $self = shift;
+  my $portname = shift;
+  return (exists $self->{ports}->{$portname});
+}
+
+# Scan through module for anything that looks like a structure
+# declaration, and capture the structure for later use to
+# auto-generate ToString functions.
+sub extract_structure_defintions($$) {
+  my $self = shift;
+  my $verilog = shift;
+
+  my @matches = ($verilog =~ m/^\s*
+                               (?:typedef\s+)?
+                               struct\s+
+                               (?:packed\s+)?
+                               \{\s*(.*?)\s*\}\s*
+                               (\w+)\s*;
+                               /xgsmo);
+  for (my $i = 0; $i <= $#matches; $i += 2) {
+    my $name = $matches[$i+1];
+    my $def  = $matches[$i];
+    my @fields = ($def =~ m/(\w+)\s*;/gsmo);
+    $self->{structs}->{$name} = new StructSpec($name, @fields);
+    print STDERR "found struct: $name (@fields)" if $main::verbose;
+  }
+}
+
+# parses the interface segment of a module declaration to figure out
+# what the inputs and outputs of a module are.
+sub extract_module_interface($$) {
+  my $self = shift;
+  my $verilog = shift;
+
+  $verilog =~ s(\s*//.*$)(\n)gmo;
+  my ($module, $parameters, $interface, $code);
+  # try to match "module foo (a, b, c);"
+  if ($verilog =~ m/^\s*module\s+
+                    (\S+?)\s*
+                    \(\s*(.*?)\s*\)\s*;\s*
+                    (.*?)
+                    endmodule/xmso) {
+    $module = $1;
+    $parameters = "";
+    $interface = $2;
+    $code = $3;
+  }
+  # try to match "module foo #(a, b, c) (d, e, f);"
+  elsif ($verilog =~ m/
+    ^\s*module\s+
+    (\S+?)\s+
+    \#\s*\(\s*(.*?)\s*\)\s*
+    \(\s*(.*?)\s*\)\s*;\s*
+    (.*?)
+    endmodule/xmso) {
+    $module = $1;
+    $parameters = $2;
+    $interface = $3;
+    $code = $4;
+  }
+  # try to match "module foo;"
+  elsif ($verilog =~ m/
+    ^\s*module\s+
+    (\S+?)
+    \s*;\s*
+    (.*?)
+    endmodule/xmso) {
+    $module = $1;
+    $parameters = "";
+    $interface = "";
+    $code = $2;
+  }
+  if (!defined $module) {
+    if ($verilog !~ m/^\s*module\s+/xmso) {
+      die $self->{'filename'} . ": Verilog code does not start with 'module'"
+    }
+    if ($verilog !~ m/endmodule\s+$/xmso) {
+      die $self->{'filename'} . ": Verilog code does not end with 'endmodule'"
+    }
+    die "Failed to parse module in $self->{'filename'}.";
+  }
+  $self->{module} = $module;
+  return ($module, $parameters, $interface, $code);
+}
+
+# parses the verilog-2001 interface portion of a module declaration and
+# extracts all of the inputs and outputs.
+sub parse_interface($$) {
+  my $self = shift;
+  my $interface = shift;
+
+  # remove verilog preprocessor directives
+  $interface =~ s/`ifn?def\s+\S+\s*//gs;
+  $interface =~ s/`else\b\s*//gs;
+  $interface =~ s/`endif\b\s*//gs;
+
+  # normalize "[ 7 : 0 ]" -> "[7:0]"
+  $interface =~ s/\[\s*(.*?)\s*:\s*(.*?)\s*\]/\[$1:$2\]/g;
+  $interface =~ s/put\[/put [/g;
+  my @elements = split(m/\s*,\s*/s, $interface);
+  my $io = 'dunno';
+  my $width = '';
+  foreach my $element (@elements) {
+    next if (!defined($element));
+    next if ($element =~ m/^\s*$/);
+    # ignore chipscope-related `includes:
+    $element =~ s/`CS_\S+\s*//;
+    # Some IP uses complex ternary expressions in port width definitions,
+    #   so we need to strip assignments ("=") but not conditionals ("==")
+    $element =~ s/\s*(?<!=)=(?!=).*$//;  # strip initializers from elements
+    # help the tokenizer parse "wire[`FOO - 1:0] foo" by putting whitespace
+    # between the slice operator and other text.
+    $element =~ s/\[/ \[/g;
+    $element =~ s/\]/\] /g;
+    # split the interface element into tokens (ie. "input" "wire" "[FOO - 1:0]"
+    # "signalname")
+    my @tokens = ($element =~ m/(\[.*?\])|(\S+)/g);
+    @tokens = grep {defined($_) && !m/^\s*$/} @tokens;
+    if ($#tokens < 0) {
+      die ("weird interface in ", $self->{"filename"},":\n",
+        $interface,"\n",
+        "---\n",
+        $element,"\n");
+    }
+    if ($tokens[0] eq 'input') {
+      $io = 'input';
+      $width = '';
+      shift(@tokens);
+    }
+    if ($tokens[0] eq 'output') {
+      $io = 'output';
+      $width = '';
+      shift(@tokens);
+    }
+    if ($tokens[0] eq 'inout') {
+      $io = 'inout';
+      $width = '';
+      shift(@tokens);
+    }
+    if (($tokens[0] eq 'logic') || ($tokens[0] eq 'wire') ||
+        ($tokens[0] eq 'reg') || ($tokens[0] eq 'tri')) {
+      $width = '';
+      shift(@tokens);
+    }
+    my $unpacked = [];
+    while ($tokens[$#tokens] =~ m/^\[.*\]$/) {
+      unshift(@$unpacked, pop(@tokens));
+    }
+    my $signalname = pop(@tokens);
+    if ($#tokens >= 0) {
+      $width = join(" ", @tokens);
+    }
+    if (! exists $self->{ports}->{$signalname}) {
+      push(@{$self->{port_order}}, $signalname);
+    }
+    my $ps = new PortSpec($signalname, $io, $width);
+    if ($#{$unpacked} >= 0) {
+      $ps->set_unpacked($unpacked);
+    }
+    $self->{ports}->{$signalname} = $ps;
+  }
+}
+
+# older verilog allows inputs and outputs to be declared in the body of
+# the module.  We scan for them here.
+sub parse_body_for_extra_interfaces($$) {
+  my $self = shift;
+  my $code = shift;
+
+  # remove all clocking blocks
+  $code =~ s/^clocking .*?^endclocking//gmso;
+
+  # scan for some old-style declarations, too:
+  my @blocks = split(m/\s*;\s*/s, $code);
+
+  # scan for assign statements
+  foreach my $block (@blocks) {
+    if ($block =~ m/^\s*assign\s+(\S+)\s*=/m) {
+      $self->{assigns}->{$1} = 1;
+    }
+  }
+
+  # scan for input/output/inout statements:
+  foreach my $block (@blocks) {
+    last if ($block =~ m/^\s*task/m);
+    last if ($block =~ m/^\s*function/m);
+    # Allow both "input foo" and "input wire foo".
+    my @m = $block =~ m/\b(input|output|inout)\b    # direction
+                          (?:\s+(?:wire|reg)\s+)?   # ignore wire|reg
+                          \s*(\[.*?\])?             # optional sized
+                          \s*(.+)/x;                # name
+    if ($#m == 2) {
+      my $io = $m[0];
+      my $width = $m[1] || "";
+      my @s = split (m/\s*,\s*/, $m[2]);
+      foreach my $s (@s) {
+        if (! exists $self->{ports}->{$s}) {
+          push(@{$self->{port_order}}, $s);
+        }
+        # Overwrite any specs if present.
+        $self->{ports}->{$s} = new PortSpec($s, $io, $width);
+      }
+    }
+  }
+}
+
+# parses a verilog code module into a prototype object, which contains
+# metadata indicating the i/o interface for the module.
+sub read_prototype {
+  my $self = shift;
+  my $filename = shift;
+  $self->{'filename'} = $filename;
+
+  my $fh = new FileHandle("<$filename") or return undef;
+  my $verilog = join("", <$fh>);
+  $fh->close();
+
+  $self->parse_prototype($verilog);
+}
+
+sub parse_structs {
+  my $self = shift;
+  my $verilog = shift;
+
+  $self->extract_structure_defintions($verilog);
+
+  return $self;
+}
+
+sub parse_prototype {
+  my $self = shift;
+  my $verilog = shift;
+
+  # remove comments and pragmas
+  $verilog =~ s(//.*$)()gmo;
+  $verilog =~ s(/\*.*?\*/)()gso;
+  $verilog =~ s/\(\*\s*\S.*?\*\)//gmo;
+
+  # extract module interface:
+  my ($module, $parameters, $interface, $code)
+    = $self->extract_module_interface($verilog);
+
+  $self->{'name'} = $module;
+  $self->{'ports'} = {};
+  $self->{'port_order'} = [];
+
+  $self->parse_interface($interface);
+  $self->parse_body_for_extra_interfaces($code);
+
+  return $self;
+}
+
+sub signals($) {
+  my $self = shift;
+  return @{$self->{port_order}};
+}
+
+###################################
+package FSM;
+our @ISA = qw/ Object /;
+###################################
+
+sub init($) {
+  my $self = shift;
+
+  $self->{fsm} = {};
+  $self->{decode} = {};
+  $self->{outputs} = {};
+  $self->{states} = [];
+  $self->{label} = "FSM";
+  $self->{onehot} = 0;  # false
+}
+
+sub state_name($$) {
+  my $self = shift;
+  my $state = shift;
+
+  my $label = $self->{label};
+  if ($state eq "default") {
+    return "default";
+  } else {
+    return uc($label . "_" . $state);
+  }
+}
+
+sub add_state($$) {
+  my $self = shift;
+  my $state = shift;
+
+  if (!defined($self->{fsm}->{$state})) {
+    # Keep transitions out of this state in an ordered list
+    # of (condition, next_state) pairs
+    push(@{$self->{fsm}->{$state}}, ['else', $state]);
+    $self->{decode}->{$state} = {};
+    if ($state ne "default") {
+      push(@{$self->{states}}, $state);
+      if (!defined($self->{initial})) {
+        $self->{initial} = $state;
+      }
+    }
+  }
+}
+
+sub add_transition {
+  my $self = shift;
+  my $current_state = shift;
+  my $next_state = shift;
+  my $condition = shift;
+  # for historical reasons, "all" is an alias for the "else" condition
+  if ($condition eq "all") { $condition = "else"; }
+  $self->add_state($current_state);
+  $self->add_state($next_state);
+  push(@{$self->{fsm}->{$current_state}}, [$condition, $next_state]);
+}
+
+sub add_decode {
+  my $self = shift;
+  my $state = shift;
+  my $condition = shift;
+  my $variable = shift;
+  my $value = shift;
+
+  if (!defined($self->{outputs}->{$variable})) {
+    $self->{outputs}->{$variable} = "'d0";
+  }
+  if (!defined($self->{decode}->{$state}->{$condition})) {
+    $self->{decode}->{$state}->{$condition} = {};
+    # Maintain an ordered list of conditions for this state's decodes
+    push(@{$self->{decode}->{$state}->{$k_condition_list}}, $condition)
+  }
+  $self->{decode}->{$state}->{$condition}->{$variable} = $value;
+}
+
+sub parse_macro($$) {
+  my $self = shift;
+  my $macro = shift;   # the macro text to expand
+
+  $self->{use_enum} = $main::config{"enum_states"};
+  if ($macro =~ s/\s*--enum\b//) { $self->{use_enum} = 1; }
+
+  # lines:
+  my @lines = split(m/\s*\n\s*/, $macro);
+
+  # extract fsm name:
+  my $label = shift(@lines); chomp($label);
+  $self->{label} = $label;
+
+  # extract fsm description:
+  my $current_state = undef;
+  my $condition = "";
+  foreach my $line (@lines) {
+    # Trim double-slash comments
+    $line =~ s|\s*//.*$||;
+    if ($line =~ m/^\s*$/) {
+      # ignore blank line
+    } elsif ($line =~ m/^(\S+)\s*->\s*(\S+)/) {
+      # example: "idle -> run if start"
+      $current_state = $self->state_name($1);
+      my $next_state = $self->state_name($2);
+      $condition = "all";
+      if ($line =~ m/\s+if\s+(.*)/) {
+        $condition = $1;
+      }
+      $self->add_transition($current_state, $next_state, $condition);
+    } elsif ($line =~ m/^(\S+):\s*$/) {
+      # this production declares the current state for subsequent
+      # non-conditional output decode assignments.
+      $current_state = $self->state_name($1);
+      $self->add_state($current_state);
+      $condition = "all";
+    } elsif ($line =~ m/^(\S+)\s*=\s*(.*[^;])\s*;?\s*$/) {
+      # this production declares a non-conditional output decode assignment for
+      # the current state
+      # Allow these assignments to be terminated with a semicolon.
+      my $term = $1;
+      my $value = $2;
+      $self->add_decode($current_state, $condition, $term, $value);
+    } else {
+      print STDERR "ERROR: fsm parser failed: $line\n";
+    }
+  }
+
+  return 1;
+}
+
+sub states($) {
+  my $self = shift;
+  return @{$self->{states}};
+}
+
+sub state_name_by_index($$) {
+  my $self = shift;
+  my $index = shift;
+  return $self->{states}->[$index];
+}
+
+sub state_count($) {
+  my $self = shift;
+  return $#{$self->{states}} + 1;
+}
+
+sub state_width($) {
+  my $self = shift;
+  my $state_width = POSIX::ceil(log($self->state_count())/log(2));
+  if ($self->{onehot}) {
+    # one bit per state
+    $state_width = $self->state_count();
+  }
+  return $state_width;
+}
+
+sub generate_state_declaration($) {
+  my $self = shift;
+  my $label = $self->{label};
+
+  # count states:
+  my @states = $self->states();
+  return ("/* no states? */\n") unless ($self->state_count() > 0);
+  my $state_width = $self->state_width();
+  my $state_msb = $state_width - 1;
+  my $initial_state = ($self->states())[0];
+
+  # construct verilog
+  if ($self->{use_enum}) {
+    print "typedef enum {\n  ";
+    print join(",\n  ", @states),"\n";
+    print "} ${label}_state_t;\n";
+    print "${label}_state_t ${label}_state = ${initial_state}, ${label}_next;\n";
+  } else {
+    for (my $i = 0; $i < $self->state_count(); $i++) {
+      my $statevar = $i;
+      if ($self->{onehot}) {
+        $statevar = 1 << $i;
+      }
+      print "localparam [${state_msb}:0] $states[$i] = ${statevar};\n";
+    }
+    print "reg [${state_msb}:0] ${label}_state;\n";
+    print "reg [${state_msb}:0] ${label}_next;\n";
+    print "initial ${label}_state <= ${initial_state};\n";
+  }
+  print "\n";
+}
+
+sub conditions($$) {
+  my $self = shift;
+  my $state = shift;
+  return grep { $_->[0] ne 'else' } @{$self->{fsm}->{$state}};
+}
+
+sub else_transition($$) {
+  my $self = shift;
+  my $state = shift;
+  # The FSM parser puts a default "else" transition at the start of every FSM
+  # transition list, so we want any subsequent "else" to override it.
+  my $last_else_ref = (grep { $_->[0] eq 'else' }
+                          @{$self->{fsm}->{$state}})[-1];
+  return $last_else_ref->[1];
+}
+
+sub generate_state_transitions($) {
+  my $self = shift;
+  my $label = $self->{label};
+  my $state_width = $self->state_width();
+
+  print main::always_comb()," begin\n";
+  print "  ",main::case()," (${label}_state)\n";
+
+  foreach my $state ($self->states()) {
+    print "      ${state}: begin\n";
+    foreach my $cond_state_ref ($self->conditions($state)) {
+      my ($cond,$next) = @{$cond_state_ref};
+      print "          if (${cond}) ${label}_next = ${next};\n";
+      print "          else\n";
+    }
+    my $next = $self->else_transition($state);
+    print "          ${label}_next = ${next};\n";
+    print "        end\n";
+  }
+  print "      default:\n";
+  if ($self->{use_enum}) {
+    print "        ${label}_next = $self->{initial};\n";
+  } else {
+    print "        ${label}_next = {${state_width}{1'bx}};\n";
+  }
+  print "  endcase\n";
+  print "end\n\n";
+
+  print main::register(REG => "${label}_state",
+                       NEXT => "${label}_next",
+                       INITIAL => $self->{initial}),"\n";
+
+  if (!$self->{use_enum}) {
+    # generate one-hot state decodes (but only if use_enum is false)
+    my $suffix = $main::config{"fsm_state_suffix"};
+    if ($self->{onehot}) {
+      for (my $i = 0; $i < $self->state_count(); $i++) {
+        print "wire " . lc($self->state_name_by_index($i))
+              . "$suffix      = ${label}_state[$i];\n";
+        print "wire " . lc($self->state_name_by_index($i))
+              . "_next$suffix = ${label}_next[$i];\n";
+      }
+    } else {
+      for (my $i = 0; $i < $self->state_count(); $i++) {
+        my $state = $self->state_name_by_index($i);
+        print "wire " . lc($state) .
+                 "$suffix      = ${label}_state\ == $state;\n";
+        print "wire " . lc($state) .
+                 "_next$suffix = ${label}_next\ == $state;\n";
+      }
+    }
+  }
+}
+
+sub generate_output_decode_for_state($$$) {
+  my $self = shift;
+  my $state = shift;
+  my $num_of_spaces = shift;
+
+  my $indent = ' ' x $num_of_spaces;
+
+  my $decode = $self->{decode}->{$state};
+  if (defined($decode)) {
+    # print the default values first as blocking assignments:
+    if ($decode->{"all"}) {
+      foreach my $var (sort keys %{$decode->{"all"}}) {
+        print "${indent}${var} = " . $decode->{"all"}->{$var} . ";\n";
+      }
+    }
+    # now override with more blocking assignments for each conditional:
+    # Conditions are strictly ordered as if-else chains.
+    my $else_if = "if";   # First condition gets "if", rest get "else if"
+    foreach my $condition (@{$decode->{$k_condition_list}}) {
+      next if ($condition eq "all");
+      print "${indent}${else_if} (${condition}) begin\n";
+      $else_if = "else if";
+      foreach my $var (sort keys %{$decode->{$condition}}) {
+        print "${indent}  ${var} = " .  $decode->{$condition}->{$var} . ";\n";
+      }
+      print "${indent}end\n";
+    }
+  }
+}
+
+sub generate_output_decode($) {
+  my $self = shift;
+  my $label = $self->{label};
+
+  if (%{$self->{outputs}}) {
+    print "\n";
+
+    # output decode:
+    print "// output decode\n";
+    print main::always_comb(), " begin\n";
+
+    # print default values:
+    $self->generate_output_decode_for_state("default", 2);
+
+    # decode case for each state except default:
+    print "  case (${label}_state)\n";
+    foreach my $state (sort keys %{$self->{decode}}) {
+      next if ($state eq "default");
+      print "    ${state}: begin\n";
+      $self->generate_output_decode_for_state($state, 6);
+      print "    end\n";
+    }
+    print "  endcase\n";
+    print "end\n\n";
+  }
+}
+
+sub set_one_hot($$) {
+  my $self = shift;
+  $self->{onehot} = shift;
+}
+
+sub generate_verilog($) {
+  my $self = shift;
+
+  $self->generate_state_declaration();
+  $self->generate_state_transitions();
+  $self->generate_output_decode();
+}
+
+###################################
+package Net;
+our @ISA = qw/ Object /;
+###################################
+# Used to keep track of nets within a CodeModule.
+
+sub init {
+  my $self = shift;
+  $self->{name} = shift;
+  $self->{width} = shift;
+  $self->{unpacked} = undef;
+  # Count the ports this net is connected to:
+  $self->{count} = { 'input' => 0, 'output' => 0, 'inout' => 0 };
+}
+
+sub set_unpacked($$) {
+  my $self = shift;
+  $self->{unpacked} = shift;  # array reference
+}
+
+sub name {
+  my $self = shift;
+  return $self->{name};
+}
+
+sub width {
+  my $self = shift;
+  return $self->{width};
+}
+
+sub CountConnection {
+  my $self = shift;
+  my $dir = shift;
+  # Indicate that this signal is connected to a port of the indicated type.
+  $self->{count}->{$dir} += 1;
+}
+
+sub NumberOfConnections {
+  my $self = shift;
+  my $dir = shift;
+  return $self->{count}->{$dir};
+}
+
+sub Declaration() {
+  my $self = shift;
+  my $no_regs = shift || 0;
+
+  my $width = $self->{width};
+  my $s = $self->{name};
+
+  my $type = "wire";
+  if (!($no_regs || $config{"autonet_allwires"})) {
+    if ($self->{count}->{inout} > 0) {
+      $type = "tri";
+    } elsif ($self->{count}->{output} == 0) {
+      $type = "reg";
+    }
+  }
+  # if systemverilog is enabled, all non-tristates are just "logic".
+  if ($config{"systemverilog"}) {
+    if ($self->{count}->{inout} > 0) {
+      $type = "tri";
+    } else {
+      $type = "logic";
+    }
+  }
+
+  # convert "[0:0]" to an implicit single-bit net.
+  if ($width eq "[0:0]") {
+    $width = "";
+  }
+
+  # convert "[$bits(my_special_t)-1:0]" to "my_special_t"
+  if ($width =~ m/^\[\$bits\(([a-zA-Z0-9_]+_t)\)-1:0\]$/) {
+    $width = $1;
+  }
+
+  my $r = [];
+  if ($width =~ m/(^(?:\s*signed)?\s*\[)|(^\s*$)/) {
+    # net is an array or single-element:
+    $r = [$type, $width, $s];
+  } else {
+    # array is a struct, so don't declare a nettype:
+    $r = [$width, $s];
+  }
+
+  if (defined($self->{unpacked})) {
+    $r = [@$r, @{$self->{unpacked}}];
+  }
+
+  return $r;
+}
+
+# Returns an array of tokens forming a port declaration
+sub Port {
+  my $self = shift;
+  my $dir = 'output';
+  if ($self->NumberOfConnections('inout') > 0) {
+    $dir = 'inout';
+  } elsif ($self->NumberOfConnections('output') == 0) {
+    $dir = 'input';
+  }
+  my @return = ($dir);
+  push @return, @{$self->Declaration(1)};
+  return @return;
+}
+
+###################################
+package CodeModule;
+our @ISA = qw/ Object /;
+###################################
+
+# CodeModule is an object that represents a single verilog source file,
+# along with all metadata that we extract about that file.  This class
+# exports the ability to perform macro expansion on that source file.
+
+# Each macro registers its own help documentation in this map:
+our %MacroHelp;  # used to generate our help message
+
+# initialize a CodeModule object
+sub init {
+  my $self = shift;
+  $self->{INCLUDES} = [];
+  $self->{NETS} = {};
+  $self->{shortname} = shift;
+  $self->{srcfilename} = normalize_path($self->{shortname});
+  # check for a file that ends with a "vpp" extension rather than
+  # a "v" extension.  If it exists, use that as our input file instead.
+  if (-e $self->{srcfilename} . "pp") {
+    $self->{srcfilename} .= "pp";
+  }
+}
+
+sub GetPackageIncludes {
+  my $self = shift;
+
+  # extract all packages
+  my @pkgs = $self->{src} =~ m/([a-z_]+)::/g;
+  @pkgs = map { s/_pkg$//; $_ } @pkgs;
+  @pkgs = grep { !m/^std$/ } @pkgs;
+  my %unique = map { $_ => 1 } @pkgs;
+  @pkgs = keys %unique;
+
+  # map onto source files
+  # TODO(jonmayer): make this non-specific.
+  return map { "src/${_}_pkg.sv" } @pkgs;
+}
+
+# load the text of a source file.
+sub load {
+  my $self = shift;
+
+  my $filename = $self->{srcfilename};
+
+  my $fh = new FileHandle("<$filename")
+    or die ("$filename: $!\n");
+  my $text = join("", <$fh>);
+  $fh->close();
+
+  $self->set_text($text);
+}
+
+# for testing, we allow code to set the contents of the file:
+sub set_text {
+  my $self = shift;
+  $self->{src} = shift;
+  $self->{text} = $self->{src};  # copy
+}
+
+# run_macro(macro_text, function_ref)
+#
+# pre-processes macro_text to get rid of
+# comments and cruft, then runs function_ref
+# on the remaining text to produce the
+# macro expansion.
+#
+# returns the expanded macro in a consistent format.
+sub run_macro($$$) {
+  my $self = shift;
+  my ($text, $function) = @_;
+
+  # trim cruft:
+  my $macro = $text; # copy
+  $macro =~ s/^\/\*\*\S+\s*//s; # get rid of macro identifier
+  $macro =~ s/[ \t]*\*+\/\s*$//; # get rid of closing comment string
+  $macro =~ s/^\s*\*+\s*//gmo; # get rid of leading " * " characters
+  $macro =~ s/(?<![\$\\])\#.+//gmo; # get rid of non-escaped comments
+  $macro =~ s/\\\#/\#/gmo; # unescape comments
+
+  $macro =~ s/\\\s*\r?\n\r?\s*/ /gsmo;  # unsplit continued lines.
+
+  my $marker = $main::config{"generated_code_marker"};
+  # if --mark is specified for any macro, insert a marker before all generated
+  # code.
+  if ($macro =~ s/^(.*?)--?mark/$1/) {
+    $marker = "/**/";
+  }
+
+  # capture the stdout of the macro-processing function.
+  my $result = "";
+  open (my $o, ">", \$result) or die;
+  select $o;
+  &{$function}($self, $macro);
+  select STDOUT;
+  close $o;
+  chomp($result);
+
+  if ($marker ne "") {
+    $result =~ s/^/$marker /gmo;
+    $result =~ s/ $//gmo;
+  }
+
+  # return the expanded macro:
+  return "${text}\n/*PPSTART*/\n${result}\n/*PPSTOP*/\n";
+}
+
+# expand_macro(label, function_ref)
+#
+# expands all verilog preprocessor directives of a
+# specified label by invoking a specified function
+# on the macro text.
+sub expand_macro($$) {
+  my $self = shift;
+  my ($label, $function) = @_;
+
+  $self->{text} =~ s{(/\*\*${label}\b.*?\*/)}
+   {$self->run_macro($1, $function)}egxs;
+}
+
+sub normalize_path($) {
+  my ($p) = @_;
+  return Cwd::abs_path($p);
+}
+
+sub expand_all_macros {
+  my $self = shift;
+
+  # delete old preprocessor output
+  my $count = ($self->{text} =~ s{\n?/\*PPSTART\*/.*?/\*PPSTOP\*/\n}{}gso);
+
+  # operations
+  if (!$main::trim) {
+    $self->expand_macro('FIXEDPOINT', \&expand_fixedpoint);
+    $self->expand_macro('PERL', \&expand_perl);
+    $self->expand_macro('EXEC', \&expand_exec);
+    $self->expand_macro('FOREACH', \&expand_foreach);
+    $self->expand_macro('STRUCT', \&expand_struct);
+    $self->expand_macro('FSM', \&expand_fsm);
+    $self->expand_macro('FSM1', \&expand_fsm1);
+    $self->expand_macro('REG', \&expand_reg);
+    # note: INST must expand before AUTOINC, AUTOINTERFACE, and AUTONET
+    #       as those macros depend on the result of INST expansion.
+    $self->expand_macro('INST', \&expand_instantiate);
+    $self->expand_macro('FORINST', \&expand_forinst);
+    $self->expand_macro('AUTOTOSTRING', \&expand_autotostring);
+    $self->expand_macro('AUTOINC', \&expand_includes);
+    # note: AUTOINTERFACE must expand before AUTONET, as it will change
+    #       AUTONET's behavior.
+    $self->expand_macro('AUTOINTERFACE', \&expand_autointerface);
+    $self->expand_macro('AUTONET', \&expand_autonet);
+    $self->expand_macro('TIEOUTPUTSTOZERO', \&expand_tieoutputs);
+  }
+}
+
+sub UpdateManifest {
+  my $self = shift;
+
+  if ($main::manifest) {
+    $main::manifest->UpdateManifest($self->{shortname});
+  }
+}
+
+# preprocess: read the file in, perform macro expansions, and write
+# it out again.  This method may be called recursively if recursive
+# mode is enabled.
+sub preprocess {
+  my $self = shift;
+  $self->{changes} = 0;
+
+  my $filename = $self->{srcfilename} or die ("No file loaded.");
+
+  my $path = normalize_path($filename);
+  if (defined($main::PROCESSED{$path})) {
+    return 0;
+  }
+  $main::PROCESSED{$path} = 1;
+
+  print STDERR "$self->{shortname}: processing...\n" if $main::verbose;
+
+  # load
+  $self->load();
+
+  # munge filename to create output file:
+  my $outputfile = $main::explicit_outputfile;
+  if (!$outputfile) {
+    $outputfile = $filename;
+    $outputfile =~ s/\.vpp$/.v/;
+    $outputfile =~ s/\.svpp$/.sv/;
+  }
+  $self->{outfilename} = $outputfile;
+
+  # save the default systemverilog flag setting in case we override
+  # it below.  (The preprocess method is invoked recursively for
+  # each file and file dependency.)
+  my $prev_systemverilog_flag = $main::config{"systemverilog"};
+
+  # if necessary, set the systemverilog flag for this file:
+  if ($main::config{"extension_selects_language"}) {
+    if ($outputfile =~ m/\.svh?$/) {
+      $main::config{"systemverilog"} = 1;
+    } elsif ($outputfile =~ m/\.vh?$/) {
+      $main::config{"systemverilog"} = 0;
+    }
+  }
+
+  $self->expand_all_macros();
+
+  # revert the systemverilog flag to the previous setting, so that it
+  # it can be the default for a file that doesn't meet the normal file
+  # extension conventions.
+  $main::config{"systemverilog"} = $prev_systemverilog_flag;
+
+  # check mode:
+  if ($main::check) {
+    if ($self->is_changed()) {
+      print STDERR "${outputfile}: NEEDS UPDATE\n";
+      $self->{changes}++;
+    }
+  } elsif ($self->is_changed() || ($outputfile ne $filename)) {
+    if ($main::config{"use_perforce"}) {
+      system("/usr/bin/g4", "edit", $outputfile);
+    }
+
+    # make backup if we're running in-place, before overwriting the
+    # new file:
+    if ($outputfile eq $filename) {
+      $filename .= '.orig';
+      my $fh = new FileHandle(">${filename}") or die ("${filename}: $!");
+      print $fh $self->{src};
+      $fh->close();
+      $filename =~ s/.orig$//;
+    }
+
+    unlink $outputfile if (-e $outputfile);
+    my $fh = new FileHandle(">$outputfile") or die ("$outputfile: $!");
+
+    # make sure we've got a final newline:
+    $self->{text} =~ s/\n*$/\n/so;
+    print $fh $self->{text};
+
+    # add the footer to the end of the file:
+    if ((!$main::trim) && ($main::config{"enable_footer"})) {
+      print $fh "\n";
+      print $fh "/*PPSTART*/\n";
+      print $fh main::wrap("// Source file: ${filename}",
+                           "/", "/\n//    ", 70) . "\n";
+      print $fh "// preprocessed by user: " . $ENV{USER}. "\n";
+      print $fh "// preprocessed on: " . (scalar localtime time()) . "\n";
+      print $fh "/*PPSTOP*/\n";
+    }
+    $fh->close();
+
+    if ($outputfile ne $filename) {
+      chmod 0444, $outputfile;  # Set read-only to minimize accident edits.
+    }
+
+    print STDERR "${outputfile}: UPDATED\n";
+  } else {
+    print STDERR "${outputfile}: no change.\n"
+        unless $main::quieter || $main::check;
+  }
+
+  $self->UpdateManifest();
+
+  return $self->{changes};
+}
+
+sub is_changed {
+  my $self = shift;
+
+  my $orig = $self->{src};
+
+  {
+    local $main::INPUT_RECORD_SEPARATOR;  # don't change the global
+    # use paragraph mode to enable chomp to remove all whitespace from
+    # the end of the strings we're examining:
+    $main::INPUT_RECORD_SEPARATOR = "";
+    chomp($orig);
+    chomp($self->{text});
+  }
+
+  return ($orig ne $self->{text});
+}
+
+
+sub report_error {
+  print STDERR "ERROR: @_\n";
+  print "ERROR: @_\n";
+}
+
+
+sub recursively_process_all_dependencies {
+  my $filename = shift;
+  my $caller = shift;
+  my $changes = 0;
+  my $path = normalize_path($filename);
+  if ((! -e $path) && (! -e "${path}pp")) {
+    warn "ERROR: File \"$caller->{srcfilename}\"\n" .
+         "  contains dependency on missing file \"$filename\".";
+    return 0;
+  }
+  if (!defined($main::PROCESSED{$path})) {
+    my $o = select;  # save the output filehandle
+    my $also = new CodeModule($path);
+    $changes += $also->preprocess();
+    select $o;  # return to the prior filehandle
+    $main::PROCESSED{$path} = 1;
+  }
+  return $changes;
+}
+
+sub parse_instantiate_macro($$) {
+  my $self = shift;
+  my $macro = shift;
+
+  my $mapper = {};
+
+  #
+  # parse out parameter lines:
+  #
+  my %PARAMS = ();
+  my @PARAM_KEYS = ();  # maintain backwards-compatible ordering.
+  while ($macro =~ s/^\s*param(?:eter)?\s+(\S+)\s+(\S.*?)\s*$//mso) {
+    $PARAMS{$1} = $2;
+    push(@PARAM_KEYS, $1);
+  }
+  $mapper->{PARAMS} = \%PARAMS;
+  $mapper->{PARAM_KEYS} = \@PARAM_KEYS;
+
+  #
+  # parse out overrides
+  #
+  my %OVERRIDES = ();
+  while ($macro =~ s/^\s*\.(\S+)\s*\(\s*(.*?)\s*\)\s*,?\s*$//mso) {
+    $OVERRIDES{$1} = $2;
+  }
+  $mapper->{OVERRIDES} = \%OVERRIDES;
+
+  $mapper->{PERL} = $macro;
+
+  return $mapper;
+}
+
+sub apply_mapper {
+  my $self = shift;
+  my $mapper = shift;
+  my $signal = shift;
+  my $enumerator = shift;  # can be used in the substitution below.
+
+  if (defined($mapper->{OVERRIDES}->{$signal})) {
+    $signal = $mapper->{OVERRIDES}->{$signal};
+    # allow direct-mapped signals to use the magic "$enumerator" token:
+    $signal =~ s/\$\{?enumerator\}?/${enumerator}/g;
+  } elsif ($mapper->{PERL}) {
+    $_ = $signal;
+    eval($mapper->{PERL});  # uses ${enumerator}
+    if ($@) {
+      print STDERR $@;
+      print STDERR "macro: '$mapper->{PERL}'\n";
+      $_ = "Error";
+    }
+    $signal = $_;
+  }
+
+  return $signal;
+}
+
+sub keep_track_of_used_net {
+  my $self = shift;
+  my $prototype = shift;
+  my $signal = shift;
+  my $mapped_signal = shift;
+  my $mapper = shift;
+
+  return if ($signal eq 'clk');
+  return if ($signal eq 'rst');
+  return if ($signal eq $main::config{"clock"});
+  return if ($signal eq $main::config{"reset_n"});
+
+  my $port = $prototype->GetPortByName($signal);
+  if (!defined($self->{NETS}->{$mapped_signal})) {
+    # This is the first time we've encountered this
+    # wire.
+    $self->{NETS}->{$mapped_signal} = $port->AsNet($mapped_signal, $mapper);
+  }
+
+  # update count of loads and drivers:
+  {
+    my $ref = $self->{NETS}->{$mapped_signal};
+    my $dir = $prototype->{ports}->{$signal}->io();
+    $ref->CountConnection($dir);
+  }
+}
+
+# parses out an "iterable" list of items from a macro in a standardized
+# way.  This function is used for both FOREACH and FORINST.
+#
+# Returns a list, of which:
+#    item 0 is always the remaining macro text, and
+#    item 1 is a reference to a list of items to iterate over.
+sub extract_iterables($) {
+  my $macro = shift;
+
+  # itemize items
+  my ($items, $text);
+  if ($macro =~ m/----*\s*?\n/) {
+    ($items, $text) = split(m/----*\s*?\n/, $macro, 2);
+  } else {
+    ($items, $text) = split(m/\n/, $macro, 2);
+  }
+
+  sub Interval {
+    my $first = shift;
+    my $step = shift;
+    my $last = shift;
+    my @i = ();
+    for (my $i = $first; $i <= $last; $i += $step) {
+      push (@i, $i);
+    }
+    return @i;
+  }
+
+  # expand "3 ... 9" to "3 4 5 6 7 8 9"
+  $items =~ s/(\d+)\s*\.\.\.\s*(\d+)/join(" ", $1 ... $2)/ge;
+  # expand "3:2:9" to "3 5 7 9"
+  $items =~ s/(\d+)\s*:\s*(\d+)\s*:\s*(\d+)/join(" ", Interval($1,$2,$3))/ge;
+  # expand "3:9" to "3 4 5 6 7 8 9"
+  $items =~ s/(\d+)\s*:\s*(\d+)/join(" ", $1 ... $2)/ge;
+  my @items = grep { length($_) > 0 }
+              split (m/\s+/, $items);
+  return $text, \@items;
+}
+
+$MacroHelp{'FORINST'} = <<EOT ;
+FORINST is a iterated version of the INST macro.
+
+Usage:
+
+    /**FORINST <path> <instance> <iterable>
+    <specifications>
+    **/
+
+Where:
+
+* "path" is the path to the module to be instantiated.
+* "instance" is the instance name to use for the instantiation.
+* "iterable" indicates an arbitrary sequence of items to iterate over.
+* "specifications" is a list of zero or more lines used to map port names
+  onto signal names.  This can take a couple of different forms, specified
+  below.
+
+See help for the INST macro for details on the path, instance, and
+specifications parameters.
+
+The "iterable" argument specifies a sequence of items to iterate over,
+identical to the FOREACH macro.  That is, a list of tokens can be
+specified:
+
+     a b c d
+     3 5 7 11 13
+
+Or a numeric range can be specified, like this:
+
+* a start and end with an ellipsis, ie. "0 ... 99"
+* a start and end with a colon, ie. "0:99"
+* a start, step, and end with colons, ie. "0:3:9"
+
+The FORINST macro creates a series of instances of the specified module.  A
+unique instance name is produced for each instance by concatenating the
+"instance" argument with an underscore ("_") followed by the iteration value.
+
+The "specifications" text of the FORINST macro can be used to specify
+parameters, and to indicate how port names should be mapped onto signal names.
+See the FORINST macro for a description of this mapping scheme.  The FORINST
+macro's behavior is modified by making the iteration value available to
+subsitution macros in the form of the "\${enumerator}" variable.
+
+In many ways, the FORINST macro functionality overlaps with SystemVerilog's
+generate statement, but provides additional flexibility for mapping ports onto
+nets, and does not require the use of unpacked arrays for interfaces.
+
+Example:
+
+    /**FORINST my_design/src/bus_keeper.v keeper A B C
+      s/^busN_/bus\${enumerator}_/;
+    **/
+
+Expands to:
+
+    /**FORINST my_design/src/bus_keeper.v keeper A B C
+      s/^busN_/bus\${enumerator}_/;
+    **/
+    /*PPSTART*/
+    BusKeeper keeper_A(
+      .busN_enable(busA_enable),
+      .busN_data(busA_data));
+
+    BusKeeper keeper_B(
+      .busN_enable(busB_enable),
+      .busN_data(busB_data));
+
+    BusKeeper keeper_C(
+      .busN_enable(busC_enable),
+      .busN_data(busC_data));
+    /*PPSTOP*/
+
+EOT
+
+sub expand_forinst($$) {
+  my $self = shift;
+  my $macro = shift;
+  my ($path, $instance);
+  $macro =~ s/^\s+//;
+
+  # turn on pretty print if --pretty is supplied.
+  my $prettyprint = $main::config{"prettyprint"};
+  if ($macro =~ s/^(.*)--pretty(?:print)?/$1/) {
+    $prettyprint = 1;
+  }
+
+  ($path, $instance, $macro) = split(m/\s+/, $macro, 3);
+  my $itemsref;
+  ($macro, $itemsref) = extract_iterables($macro);
+
+  my $prototype = $self->get_prototype_from_file($path);
+
+  for (my $i = 0; $i <= $#{$itemsref}; $i++) {
+    my $enumerator = $itemsref->[$i];
+    my $instancename = "${instance}_${enumerator}";
+    $self->expand_instantiate_with_prototype($prototype, $instancename,
+                                             $macro, $enumerator, $prettyprint);
+  }
+}
+
+$MacroHelp{'INST'} = <<EOT ;
+    /**INST <path> <instance>
+    <specifications> **/
+
+Where:
+
+* "path" is the path to the module to be instantiated.
+* "instance" is the instance name to use for the instantiation.
+* "specifications" is a list of zero or more lines used to map port names
+  onto signal names.  This can take a couple of different forms.
+
+The INST macro creates an instance of the specified module.  The
+"specifications" text of the INST macro can be used to specify parameters,
+and to indicate how port names should be mapped onto signal names.
+
+Parameters can be specified for the instantiated block like this:
+
+     parameter <param-name> <param-value>
+
+Transformation of port names onto signal names occurs by applying a
+set of transformation rules onto the port name to produce the signal
+name that port should connect to.
+
+The simplest transformation simply maps a port to a signal, like this:
+
+     .portname(signalname)
+
+Alternately, a regular expression substitution can be performed on the
+port name to produce the signal name:
+
+     s/^bus_/thisbus_/;
+
+The INST macro is often used in conjunction with the AUTONET macro to
+automatically generate correct net declarations for all nets mapped onto the
+ports of INST-instantiated submodules.  Additionally, the AUTOINTERFACE macro
+can be used to propagate unbound ports from INST-instantiated submodules to the
+module interface.
+
+See also: the AUTONET, AUTOINTERFACE, and FORINST macros.
+
+Example:
+
+    /**INST snout/rtl/sn_ear_eeprom.v ear_eeprom1
+      parameter Width 12
+      .clk(clk_sys)
+      s/^i2c_/info_smbus_ear1_/;
+    **/
+
+EOT
+sub get_prototype_from_file{
+  my $self = shift;
+  my $filename = shift;
+
+  if ($main::recursive) {
+    my $changes = recursively_process_all_dependencies(
+        $filename, $self);
+    $self->{changes} += $changes;
+  }
+
+  my $prototype = new ModuleSpec()->read_prototype($filename);
+  if (!$prototype) {
+    report_error("Could not read ${filename}: $!");
+    return;
+  }
+
+  push (@{$self->{INCLUDES}}, $filename);
+
+  return $prototype;
+}
+
+sub expand_instantiate($$) {
+  my $self = shift;
+  my $macro = shift;
+
+  # turn on pretty print if --pretty is supplied.
+  my $prettyprint = $main::config{"prettyprint"};
+  if ($macro =~ s/^(.*)--pretty(?:print)?/$1/) {
+    $prettyprint = 1;
+  }
+
+  if (!($macro =~ s/^\s*(\S+)\s+(\S+)\s*//so)) {
+    report_error("Badly formatted INST macro");
+    return;
+  }
+  my ($filename, $instancename) = ($1, $2);
+
+  my $prototype = $self->get_prototype_from_file($filename);
+
+  $self->expand_instantiate_with_prototype($prototype, $instancename, $macro,
+    undef, $prettyprint);
+}
+
+sub expand_instantiate_with_prototype {
+  my $self = shift;
+  my $prototype = shift;
+  my $instancename = shift;
+  my $macro = shift;
+  my $enumerator = shift;
+  my $prettyprint = shift;
+
+  if (!defined($enumerator)) {
+    my @digits = ($instancename =~ m/(\d+)/g);
+    $enumerator = pop(@digits) || "0";
+  }
+
+  if (!defined($prototype)) {
+    report_error("Can not instantiate without module definition.");
+    return;
+  }
+
+  my @signals = $prototype->signals();
+  my $mod = $prototype->{'name'};
+
+  my $mapper = $self->parse_instantiate_macro($macro);
+
+  # fix up parameters
+  my @params = ();
+  foreach my $key (@{$mapper->{PARAM_KEYS}}) {
+    $mapper->{PARAMS}->{$key} =~ s/\$\{?enumerator\}?/${enumerator}/g;
+    push(@params, ".${key}($mapper->{PARAMS}->{$key})");
+  }
+
+  #
+  # map ports onto signals:
+  #
+  my @d = ();
+  foreach my $signal (@signals) {
+    my $mapped_signal = $self->apply_mapper($mapper, $signal, $enumerator);
+
+    my $hookup;
+    my $width = $prototype->{ports}->{$signal}->width();
+    # expand any Parameters within the $width expression:
+    foreach my $key (keys %{$mapper->{PARAMS}}) {
+      $width =~ s/\b${key}\b/$mapper->{PARAMS}->{$key}/g;
+    }
+    if ($prettyprint) {
+      my $dir = $prototype->{ports}->{$signal}->io();
+      $hookup = sprintf ".%-25s (%-25s) // %6s",
+          $signal, $mapped_signal, $dir;
+      if ($width ne "") {
+        $hookup .= " $width";
+      }
+    } else {
+      $hookup = ".${signal} (${mapped_signal})";
+    }
+
+    push(@d, $hookup);
+    $self->keep_track_of_used_net($prototype, $signal, $mapped_signal, $mapper);
+  }
+
+  #
+  # print module instantiation
+  #
+  print "${mod} ";
+  # When in pretty-print mode, line up commas on the left
+  my $first_indent = ($prettyprint) ? "   " : "  ";
+  my $conjunction = ($prettyprint) ? "\n,  " : ",\n  ";
+  if (%{$mapper->{PARAMS}}) {
+    print "#(\n";
+    print $first_indent,
+          join($conjunction, @params),
+          ") ";
+  }
+  if ($#d >= 0) {
+    print "${instancename} (\n";
+    print $first_indent, join($conjunction, @d), "\n);\n";
+  } else {
+    # module has no ports.
+    print "${instancename} ();\n";
+  }
+}
+
+$MacroHelp{'AUTOINC'} = <<EOT ;
+The AUTOINC macro can be used to generate dependency metadata for all
+sub-modules instantiated using INST and FORINST macros.  It is meant to be
+placed at the top of a verilog source file, outside of any module declaration.
+
+This macro is largely obsolete, as modern tool flows manage dependencies by
+directly parsing Verilog source files.
+
+The old way of managing Verilog dependencies was to tick-include all immediate
+dependencies. AUTOINC generates tese tick-include directives as default
+behavior.
+
+Alternately, there was another older tool flow that managed dependencies using
+specially formatted DEPEND comments in source code.  If the `depend_mode`
+configuration option is set in verilogpp's configuration file, these comments
+will be generated instead of tick-includes.
+
+Example of use:
+
+    // Alpha is a module that instantiates a Foo.
+
+    /**AUTOINC**/
+
+    module Alpha(...);
+
+    /**INST foo.sv i_foo**/
+
+    endmodule
+
+EOT
+sub expand_includes($$) {
+  my $self = shift;
+
+  # packages are always expressed as `includes.  Otherwise, typedefs
+  # within a package aren't visible.
+  my @pkgs = $self->GetPackageIncludes();
+
+  # module dependencies can be expressed as // DEPEND or `includes:
+  my %unique = map { $_ => 1 } @{$self->{INCLUDES}};
+  if ($main::config{"depend_mode"}) {
+    if (@pkgs) {
+      print map {'// DEPEND: ' . $_ . "\n";} sort @pkgs;
+    }
+    print map {'// DEPEND: ' . $_ . "\n";} sort keys %unique;
+  } else {
+    if (@pkgs) {
+      print "`ifndef PLANAHEAD\n";
+      print map {'`include "' . $_ . '"' . "\n";} sort @pkgs;
+      print "`endif\n";
+    }
+    print map {'`include "' . $_ . '"'. "\n";} sort keys %unique;
+  }
+}
+
+$MacroHelp{'AUTOINTERFACE'} = <<EOT ;
+AUTOINTERFACE can be used to generate a set of ports for a module based on the
+set of unbound ports exported by submodules.  The upshot of this is that adding
+a port to a sub-module can automatically cause that port to be propagated to
+the enclosing module's interface.
+
+Rules:
+
+* Any net that has zero drivers is declared as an input.
+
+* Any net with zero load is declared as an output.
+
+* Bidirectional ports on submodules are always propagated up.
+
+* AUTOINTERFACE currently only knows about nets on submodules instantiated with
+  INST or FORINST, and wires explicitly driven with assign statements.  It does
+  not support a more sophisticated parsing of logic within a module, and the
+  recommended use case is for modules that only stitch together instances,
+  without adding new module-level logic.
+
+In the following example, both the Alpha and Beta modules are instantiated in
+an AlphaAndBeta module.  All ports are connected to nets of the same name.  Any
+ports not used to communicate between Alpha and Beta are automatically added
+to the AlphaAndBeta interface:
+
+    module AlphaAndBeta (
+      /**AUTOINTERFACE**/
+    );
+
+    /**AUTONET**/
+
+    /**INST alpha.v i_a**/
+
+    /**INST beta.v i_b**/
+
+    endmodule
+
+The above example might expand to something like this:
+
+    module AlphaAndBeta (
+      /**AUTOINTERFACE**/
+      /*PPSTART*/
+      input logic [3:0] in,
+      output logic [31:0] out
+      /*PPSTOP*/
+    );
+
+    /**AUTONET**/
+    /*PPSTART*/
+    logic [7:0] b;
+    logic [15:0] c;
+    /*PPSTOP*/
+
+    /**INST alpha.v i_a**/
+    /*PPSTART*/
+    Alpha i_a (
+      .in(in),
+      .b(b),
+      .c(c));
+    /*PPSTOP*/
+
+    /**INST beta.v i_b**/
+    /*PPSTART*/
+    Beta i_b (
+      .b(b),
+      .c(c),
+      .out(out));
+    /*PPSTOP*/
+
+    endmodule
+EOT
+sub expand_autointerface($$) {
+  my $self = shift;
+  my $macro = shift;
+
+  # parse the input and output ports of this module
+  my $my_interface = new ModuleSpec()->parse_prototype($self->{text});
+
+  my @sigs = sort keys %{$self->{NETS}};
+  my @ports = ();
+  foreach my $s (@sigs) {
+    # skip if signal is already in this module's interface
+    if ($my_interface->HasPort($s)) {
+      next;
+    }
+
+    # Skip constants and expressions
+    next unless ($s =~ m/[[:alpha:]]/);  # Must have a letter
+    next if ($s =~ m/\W/);  # Must only contain "word" characters.
+
+    # examine each net:
+    my $ref = $self->{NETS}->{$s};
+
+    # We choose to surface signals in the interface ...
+    #
+    # ... if the signal is connected to at least one bidirectional port,
+    #     then we surface it as a bidirectional port.
+    if ($ref->NumberOfConnections('inout') > 0) {
+      push (@ports, [' ', $ref->Port()]);
+    # ... or, if it is not connected to any output ports, then it must
+    #     be an input of the enclosing interface.
+    } elsif ($ref->NumberOfConnections('output') == 0) {
+      if (!exists($my_interface->{assigns}->{$ref->{name}})) {
+        push (@ports, [' ', $ref->Port()]);
+      }
+    # ... or, if it is not connected to any input ports (ie. nobody
+    #     within the module is listening to this signal), then it must
+    #     be intended to be an output port of the enclosing interface.
+    } elsif ($ref->NumberOfConnections('input') == 0) {
+      push (@ports, [' ', $ref->Port()]);
+    }
+  }
+
+  print &main::TabularAlign(\@ports, ",\n"), "\n";
+}
+
+sub CountAssignments {
+  my $self = shift;
+  my $my_interface = shift;
+
+  foreach my $s (keys %{$my_interface->{assigns}}) {
+    if (defined($self->{NETS}->{$s})) {
+      my $ref = $self->{NETS}->{$s};
+      $ref->CountConnection('output');
+    }
+  }
+}
+
+
+$MacroHelp{'AUTONET'} = <<EOT ;
+Usage:
+
+    /**AUTONET [--init] [--warn] [--cb]**/
+
+AUTONET can be used to automatically declare all nets used to connect to
+ports using the INST macro.
+
+The following rules apply:
+
+* a net with no drivers is declared as a reg.
+* a net with one (or more) drivers is declared as a wire.
+* a net that matches a signal in this block's own module interface
+  list is omitted from the set of nets declared by AUTONET.
+* The AUTONET macro won't keep track of the nets associated with
+  a manually instantiated module (TODO(jonmayer): fix this.)
+
+If a module only uses INST to declare module instances, then AUTONET can be
+used to declare the complete interconnect.  AUTONET is also useful for quickly
+declaring the wires and regs of an instantianted module-under-test for
+testbenches.
+
+If the "--init" option is supplied to the AUTONET macro, then verilogpp will
+also generate code to initialize all signals that are inputs to instantiated
+modules to zero.  (This is useful for unit tests.)
+
+If the "--warn" option is supplied to the AUTONET macro, then verilogpp will
+annotate the generated nets with warnings if a net appears to have zero
+drivers, multiple drivers, or zero load.  Note that verilogpp does not
+fully parse verilog, so AUTONET's warnings are only accurate in designs
+that only contain expansions of INST macros.
+
+If the "--cb" option is supplied, verilogpp will create appropriate clocking
+blocks.  verilogpp's ideas of appropriate clocking blocks are:
+
+* any undriven signal is considered an output from the clocking block.
+* any unloaded signal is considered an input to the clocking block.
+* interconnect signals (signals with at both loads and a driver) are
+  not represented in the clocking block.
+* Additionally, signals in different clock domains (identified by naming
+  convention: signals in the foo_clk domain must share the foo_ prefix)
+  are each broken out into their own clocking block.
+
+For each clock domain, two clocking blocks are generated:
+
+* a "cb" clocking block, which declares inputs and outputs, for use by
+  driver code.
+* an "mcb" clocking block, which declares all signals as inputs, for use
+  by monitor code.
+
+AUTONET is slightly magic in ways that improve style guide compliance and
+readability, as follows:
+
+* one-bit wide bit arrays (ie. "wire [0:0] foo") are declared by autonet as
+  style-compliant single bit nets (ie. "wire foo").
+
+* AUTONET recognizes that variables declared as "wire [\$bits(some_type_t)-1:0]
+  bar" are better declared as "some_type_t bar" -- and makes this so.  This
+  only works if the data type is declared with a style guide compliant name
+  (that is, the type name must end with "_t").
+
+TODO(jonmayer): should interconnect signals be treated as inputs to
+clocking blocks, instead of being ignored?
+
+TODO(jonmayer): Add options to make AUTONET more flexible (filterable?).
+
+Example:
+
+    /**AUTONET**/
+
+EOT
+sub expand_autonet($$) {
+  my $self = shift;
+  my $macro = shift;
+
+  # --init initializes undriven nets
+  my $init = 0;
+  if ($macro =~ s/\s*--?init\s*//) {
+    $init = 1;
+  }
+
+  # --warn warns of undriven or unloaded nets
+  my $warn = 0;
+  if ($macro =~ s/\s*--?warn\s*//) {
+    $warn = 1;
+  }
+
+  # --cb auto-generates a clocking block for undriven/unloaded nets
+  my $cb = 0;
+  if ($macro =~ s/\s*--?cb\s*//) {
+    $cb = 1;
+  }
+
+  # parse the input and output ports of this module
+  my $my_interface = new ModuleSpec()->parse_prototype($self->{text});
+  $self->CountAssignments($my_interface);
+
+  my @sigs = sort keys %{$self->{NETS}};
+
+  # only used --cb:
+  my @cb_clocks = ();
+  my $cb_signals = new SignalSet();
+
+  foreach my $s (@sigs) {
+    # if signal is in this module's interface, autonet should
+    # skip it:
+    if ($my_interface->HasPort($s)) {
+      next;
+    }
+
+    # Skip constants and expressions
+    next unless ($s =~ m/[[:alpha:]]/);  # Must have a letter
+    next if ($s =~ m/\W/);  # Must only contain "word" characters.
+
+    # otherwise, let's figure out what type of net it is and
+    # add it to autonets list of nets:
+    my $ref = $self->{NETS}->{$s};
+
+    my $warning = "";
+    if ($warn) {
+      if (($ref->NumberOfConnections('input') == 0) &&
+          ($ref->NumberOfConnections('inout') == 0)) {
+        $warning = "  // WARNING: zero load";
+      }
+      if (($ref->NumberOfConnections('output') == 0) &&
+          ($ref->NumberOfConnections('inout') == 0)) {
+        $warning = "  // WARNING: zero drivers";
+      }
+      if ($ref->NumberOfConnections('output') > 1) {
+        $warning = "  // WARNING: multiple drivers";
+      }
+    }
+
+    if ($s =~ m/^(.*_)clk$/) {
+      push(@cb_clocks, $1);
+    }
+    elsif (($ref->NumberOfConnections('input')  == 0) &&
+           ($ref->NumberOfConnections('output') != 0) &&
+           ($ref->NumberOfConnections('inout')  == 0)) {
+      $cb_signals->AddSignal($s, "input");
+    }
+    elsif (($ref->NumberOfConnections('input')  != 0) &&
+           ($ref->NumberOfConnections('output') == 0) &&
+           ($ref->NumberOfConnections('inout')  == 0)) {
+      $cb_signals->AddSignal($s, "output");
+    }
+    elsif (($ref->NumberOfConnections('input')  == 0) &&
+           ($ref->NumberOfConnections('output') == 0) &&
+           ($ref->NumberOfConnections('inout')  != 0)) {
+      $cb_signals->AddSignal($s, "inout");
+    }
+
+    # determine what to initialize the register too, if needed.
+    my $assignment = "";  # empty string by default
+    if ($init) {
+      if ($ref->NumberOfConnections('inout') > 0) {
+        $assignment = " = 'Z";
+      } elsif ($ref->NumberOfConnections('output') == 0) {
+        $assignment = " = '0";
+      }
+      if ($assignment && defined($ref->{unpacked})) {
+        $assignment = substr($assignment, 3);
+        $assignment = " = '{default: $assignment}";
+      }
+    }
+
+    # print the declaration
+    print join(" ", @{$ref->Declaration()}), $assignment, ";${warning}\n";
+  }
+
+  if ($cb) {
+    foreach my $prefix (@cb_clocks) {
+      # filter signals by clock group
+      my $in_set = new SignalSet();
+      my $out_set = new SignalSet();
+      $cb_signals->DivideByPrefix($prefix, $in_set, $out_set);
+      $in_set->PrintClockingBlock(${prefix});
+      $cb_signals = $out_set;
+    }
+    $cb_signals->PrintClockingBlock("");
+  }
+}
+
+$MacroHelp{'AUTOTOSTRING'} = <<EOT ;
+AUTOTOSTRING automatically generates a set of functions for pretty-printing
+any struct definitions found within the current source module.
+
+For any struct "X" found in the current code unit, AUTOTOSTRING produces:
+
+* X_ToString: A function for producing a human-readable string representation.
+* X_ToJSON: A function for producing a JSON representation.
+
+If no filename is specified, AUTOTOSTRING parses the current file.
+
+If one or more filenames are specified, AUTOTOSTRING parses the specified
+files for struct definitions.
+
+For example, this source:
+
+    typedef struct packed {
+      logic [7:0] foo;
+      logic bar;
+      reg [127:0] zap;
+    } foobarzap;
+    //
+    /**AUTOTOSTRING**/
+
+Expands to this output file:
+
+    typedef struct packed {
+      logic [7:0] foo;
+      logic bar;
+      reg [127:0] zap;
+    } foobarzap;
+    //
+    /**AUTOTOSTRING**/
+    /*PPSTART*/
+    function string foobarzap_ToString(foobarzap value);
+      return {
+        "foobarzap{",
+        \$sformatf("foo=%x,", value.foo),
+        \$sformatf("bar=%x,", value.bar),
+        \$sformatf("zap=%x", value.zap),
+        "}"
+      };
+    endfunction
+    //
+    function string foobarzap_ToJSON(
+        foobarzap value,
+        string sep = "\\n    ");
+      return {
+        "{", sep,
+        \$sformatf("\\"bar\\": %d,", value.bar), sep,
+        \$sformatf("\\"foo\\": %d,", value.foo), sep,
+        \$sformatf("\\"zap\\": %d", value.zap), sep,
+        "}"
+      };
+    endfunction
+    /*PPSTOP*/
+
+EOT
+
+sub expand_autotostring($$) {
+  my $self = shift;
+  my $macro = shift;
+
+  my @files = ($macro =~ m/(\S+)/gso);
+  if ($#files >= 0) {
+    # filenames specified:
+    foreach my $filename (@files) {
+      my $fh = new FileHandle("<$filename") or return undef;
+      my $text = join("", <$fh>);
+      $fh->close();
+      push (@{$self->{INCLUDES}}, $filename);
+      expand_autotostring_from_text($text);
+    }
+  } else {
+    # no filenames specified:
+    # parse the structure declarations in this file.
+    expand_autotostring_from_text($self->{text});
+  }
+}
+
+sub expand_autotostring_from_text($) {
+  my $text = shift;
+  my $spec = new ModuleSpec()->parse_structs($text);
+
+  # sort structs by name to generate a stable ordering:
+  foreach my $s (sort {$a->{name} cmp $b->{name}} values %{$spec->{structs}}) {
+    $s->GenerateToStringFunction();
+  }
+}
+
+$MacroHelp{'REG'} = <<EOT ;
+*DEPRECATED*: Use a macro instead.
+
+This macro provides a concise way to instantiate registers in a consistent
+fashion.  Register mapping is specified using a simple RTL syntax:
+
+    register <- value
+
+Alternately, conditional loading of registers can be specified:
+
+    register <- value if condition
+
+Clock and reset default to "clock" and "reset_n" respectively, but can
+be overridden with the "clk:" and "rst:" directives.
+
+Example:
+
+    /**REG
+       foo_d <- foo
+       bar <- bus_data if bus_wren & bus_sel
+       clk:clk_sys
+       bum_d <- bum
+    **/
+
+EOT
+sub expand_reg($$) {
+  my $self = shift;
+  my $macro = shift;
+  my $clk = $main::config{"clock"};
+  my $rst = $main::config{"reset_n"};
+  my @lines = split(m/\s*\n\s*/, $macro);
+  foreach my $line (@lines) {
+    if ($line =~ s/\bclk:\s*(\S+)//) { $clk = $1; }
+    if ($line =~ s/\brst:\s*(\S+)//) { $rst = $1; }
+    if ($line =~ m/^\s*(\S+?)\s*<[\=\-]\s*(\S.*?)\s+if\s+(\S.*)/) {
+      # register with a load enable
+      print main::register(REG => $1,
+                           NEXT => $2,
+                           CONDITION => $3,
+                           CLOCK => $clk,
+                           RESET_N => $rst);
+    }
+    elsif ($line =~ m/^\s*(\S+?)\s*<[\=\-]\s*(\S.*)/) {
+      # unconditional
+      print main::register(REG => $1,
+                           NEXT => $2,
+                           CLOCK => $clk,
+                           RESET_N => $rst);
+    }
+  }
+}
+
+
+$MacroHelp{'FIXEDPOINT'} = <<EOT ;
+*DEPRECATED*: please use a struct instead.
+
+The FIXEDPOINT macro constructs a family of `defines that describe a
+fixed-point integer format.  The three parameters to this macro are:
+
+* name: the name of the new fixed-point type
+* intbits: the number of integral bits associated with this format.
+* frabits: the number of fractional bits associated with this format.
+
+The FIXEDPOINT macro will define four constants:
+
+* (name)_INTBITS: the number of integral bits associated with this format.
+* (name)_FRABITS: the number of fractional bits associated with this format.
+* (name)_WIDTH: the total number of bits needed to represent this format.
+* (name)_WORD: the word macro to use when declaring a word of this type.
+* (name)_INT: the bit range of the integer field of this structure
+* (name)_FRA: the bit range of the fractional field of this structure
+
+Example:
+
+    /**FIXEDPOINT DISTANCE 5 3 **/
+
+EOT
+sub expand_fixedpoint($$) {
+  my $self = shift;
+  my $macro = shift;
+  my @lines = split(m/\s*\n\s*/, $macro);
+  foreach my $line (@lines) {
+    my ($name, $intbits, $fracbits) =
+      ($line =~ m/^\s*(\S+)\s+(\d+)\s+(\d+)\s*$/);
+    my $width = $intbits + $fracbits;
+    print "`define ${name}_INTBITS ${intbits}\n";
+    print "`define ${name}_FRABITS ${fracbits}\n";
+    print "`define ${name}_WIDTH ${width}\n";
+    print "`define ${name}_WORD ${width}-1:0\n";
+    print "`define ${name}_INT ${width}-1:${fracbits}\n";
+    print "`define ${name}_FRA ${fracbits}-1:0\n";
+  }
+}
+
+
+$MacroHelp{'PERL'} = q{
+*DEPRECATED*: Use the EXEC macro instead.
+
+This macro is expanded by evaluating an embedded perl script.
+The STDOUT produced by the embedded perl script is the generated
+verilog code.  Think of it like a "generate" statement on steroids.
+
+This macro improves code by providing a more maintainable
+alternative to the copy-paste-edit cycle.
+
+Example:
+
+    /**PERL
+     * my @signals = qw(a b c d);
+     * print "  " . join(",\n  ",
+     *              map { ".out_$_(in_$_)" }
+     *              @signals) . "\n";
+     */
+
+};
+sub expand_perl($$) {
+  my $self = shift;
+  my $macro = shift;
+  warn "Use of the PERL macro is deprecated.";
+  eval($macro);
+  if ($@) {
+    print "PERL ERROR:\n$@\n";
+    print STDERR "PERL ERROR:\n$@\nin macro:\n$macro\n";
+  }
+}
+
+$MacroHelp{'EXEC'} = q{
+The EXEC macro invokes a separate code-generating program in a subshell, and
+captures its output.  The stdout output of that program is the generated code.
+
+The first line of the EXEC macro specifies the path to the program to execute,
+as well as any commandline parameters.
+
+TODO(jonmayer): make the rest of the macro text available to the program's
+stdin.
+
+Example:
+
+    /**EXEC ./scripts/generate_code.py **/
+
+};
+sub expand_exec($$) {
+  my $self = shift;
+  my $macro = shift;
+
+  my ($program) = ($macro =~ m/^\s*(\S.*)\s*$/m);
+  print `$program`;
+}
+
+$MacroHelp{'FOREACH'} = <<EOT ;
+This macro is used to iterate over a list of items.  The macro text
+is expanded so that the special character '\%' is expanded to be the
+iterand.
+
+While the functionality provided by the FOREACH macro is similar to
+SystemVerilog's `generate` statement, FOREACH provides the added
+flexibility of being able to iterate over arbitrary (rather than
+exclusively numeric) tokens, and the ability to concatenate strings
+into new tokens.
+
+For example:
+
+    /**FOREACH a b c d
+      assign bus_% = %;
+    **/
+
+Expands to:
+
+    /**FOREACH a b c d
+      assign bus_% = %;
+    **/
+    /*PPSTART*/
+    assign bus_a = a;
+    assign bus_b = b;
+    assign bus_c = c;
+    assign bus_d = d;
+    /*PPSTOP*/
+
+A literal '\%' character can be embedded with the special sequence '\%\%'.
+
+Unfortunately, the useful character '\#' is used by verilogpp to denote a
+comment in all verilogpp macro descriptions.  A literal '\#' character can be
+embedded with the special sequence '\\\#'.
+
+The special token `\$\{index\}` expands to the index of the current iterable.
+This can be useful for mapping non-integer iterables onto integers.
+
+For example:
+
+    /**FOREACH a b c
+      assign signal[\$\{index\}] = %;
+    **/
+
+Expands to:
+
+    /**FOREACH a b c
+      assign signal[\$\{index\}] = %;
+    **/
+    /*PPSTART*/
+    assign signal[0] = a;
+    assign signal[1] = b;
+    assign signal[2] = c;
+    /*PPSTOP*/
+
+For readability, the items to iterate over can be split across multiple
+lines if the macro text is separated from the macro header by a sequence
+of four dashes, like this:
+
+    /**FOREACH alpha
+               beta
+               gamma
+               omega
+               ----
+               reg %_reg;
+    **/
+
+A range can be iterated over as well.  There are 3 different ways to
+specify a numeric range:
+
+* a start and end with an ellipsis, ie. "0 ... 99"
+* a start and end with a colon, ie. "0:99"
+* a start, step, and end with colons, ie. "0:3:9"
+
+For example:
+
+    /**FOREACH 0 ... 99
+       bitslice \\#(SLICE=%) slice%(clk, rst_n, din[%], dout[%]);
+    **/
+
+    /**FOREACH 0:4:16
+       nibbleslice \\#(SLICE=(%/4) nibslice%(.din[(%+3):%]);
+    **/
+
+(Note the required escaping of the "#" character in the parameter
+section of the instantiation.)
+
+##### Optional flags
+
+Optionally, the "--dense" flag can be supplied on the first line of
+the FOREACH macro.  Under normal operation, FOREACH generates comments
+indicating the beginning of each iteration of the generated code.  The
+"--dense" flag disables this behavior.
+
+One additional obscure feature: when using FOREACH to generate the final
+set of signals in a module interface block, it is sometimes necessary to
+ask the preprocessor to remove the final comma from the generated string.
+The "--separator" flag is useful in this scenario, as it inserts a separator
+string between each foreach item, but does not append the separator to
+the final element.  For example:
+
+    /**FOREACH a b c --separator=,
+      input foo_%
+    **/
+
+TODO(jonmayer): Support '\${enumerator}` as a preferred alterative to `%`.
+
+EOT
+
+sub expand_foreach($$) {
+  my $self = shift;
+  my $macro = shift;
+
+  my $dense = 0;
+  if ($macro =~ s/\s*--dense\b//) { $dense = 1; }
+
+  my $separator = undef;
+  if ($macro =~ s/\s*--separator=(\S+)//) { $separator = $1; }
+
+  my ($text, $itemsref) = extract_iterables($macro);
+
+  # generate
+  for (my $i = 0; $i <= $#{$itemsref}; $i++) {
+    my $item = $itemsref->[$i];
+    my $temp = $text;
+    $temp =~ s/\%\%/SPECIAL_MAGIC_TOKEN_FOO/g;
+    $temp =~ s/\%/${item}/g;
+    $temp =~ s/\$\{index\}/${i}/g;
+    $temp =~ s/SPECIAL_MAGIC_TOKEN_FOO/\%/g;
+    if (defined($separator) && ($i != $#{$itemsref})) {
+      $temp =~ s/(\s*)$/${separator}$1/so;
+    }
+    if (!$dense) {
+      print "\n/* item: ${item} */\n";
+    }
+    print $temp;
+  }
+}
+
+$MacroHelp{'STRUCT'} = <<EOT ;
+*DEPRECATED*: This macro was useful when working with Verilog-2001 code,
+but modern code should use SystemVerilog struct constructs.
+
+The STRUCT macro is used to concatenate a series of signals
+into a data-structure like bus, by defining a set of macros
+to simplify the assembly and disassembly of that bus.
+
+Each line is a data member, optionally prefixed by a word size.  If
+word size is omitted, the data member is assumed to be a single bit wide.
+
+By default, fields in the structure are concatenated in order so that
+the first element is the least-signficant part of the structure.  If
+the reverse order is preferred, supply the "--reverse" option to the
+macro declaration, and the first item will be the most significant part
+of the structure.
+
+Options: if the "--reverse" option is supplied to the macro declaration
+line, the fields of the structure are produced in reverse order (ie. first
+item is the most signficiant part of the packed structure word).
+
+Example:
+
+    /**STRUCT mystructure
+         foo
+         bar
+      16 word
+      8  byte
+    **/
+    wire [`MYSTRUCTURE_WORD] x = {my_byte, my_word, my_bar, my_foo};
+
+    /**STRUCT otherstruct --reverse
+      8 msb
+      8 lsb
+    **/
+    wire [`OTHERSTRUCT_WORD] s = {my_msb, my_lsb};
+
+EOT
+sub expand_struct($$) {
+  my $self = shift;
+  my $macro = shift;
+
+  my $reverse = 0;
+  if ($macro =~ s/\s*--reverse\s*/\n/) {
+    $reverse = 1;
+  }
+
+  my @lines = split(m/\s*\n\s*/, $macro);
+  my $label = uc(shift(@lines));
+
+  my $count = 0;
+  my @members = ();
+  foreach my $line (@lines) {
+    if ($line =~ m/^(\d+)\s+(\S+)$/) {
+      push (@members, [$2, $1]);
+      $count += $1;
+    } elsif ($line =~ m/^(\S+)$/) {
+      push (@members, [$1, 1]);
+      $count += 1;
+    } elsif ($line =~ m/^\[(\d+):0\]\s+(\S+)$/) {
+      push (@members, [$2, $1 + 1]);
+      $count += $1 + 1;
+    } else {
+      print "// Could not parse: $line\n";
+    }
+  }
+  print "`define ${label}_WIDTH (${count})\n";
+  print "`define ${label}_WORD  (${count}-1):0\n";
+  if ($reverse) {
+    @members = reverse @members;
+  }
+  print_members($label, @members);
+}
+
+sub print_members {
+  my $label = shift;
+  my @members = @_;
+
+  my $lsb = 0;
+  foreach my $mem (@members) {
+    my ($s, $w) = @{$mem};
+    my $S = uc($s);
+    my $msb = $lsb + $w - 1;
+    print "`define ${label}_${S}_WIDTH (${w})\n";
+    print "`define ${label}_${S}_WORD  (${w}-1):0\n";
+    if ($w == 1) {
+      print "`define ${label}_${S} ${lsb}\n";
+    } else {
+      print "`define ${label}_${S} ${msb}:${lsb}\n";
+    }
+    $lsb += $w;
+  }
+}
+
+
+$MacroHelp{'FSM'} = <<EOT ;
+This macro expands a terse FSM description into a synchronous
+FSM implementation.  It is intended to be a more readable,
+maintainble means of expressing FSMs.
+
+The first token in the FSM macro is the name of the finite
+state machine.
+
+The body text of the FSM macro can consist of state transition
+declarations, or of output decode assertions.
+
+##### STATE TRANSITION DECLARATION
+
+The following line declares a state transition:
+
+    <state> -> <newstate> [if <condition>]
+
+The above line declares:
+
+* both "state" and "newstate" are states in the FSM.
+* if the "if" clause is provided, then <condition> must
+  evaluate to true for the state transition to occur.
+* if the "if" clause is omitted, then the transition is
+  the default transition that occurs if all other transition
+  conditions are false (or not specified).
+* conditions are evaluated in the order specified, so each
+  condition implicitly depends on prior conditions being false.
+
+Unless otherwise specified by an explicit default transition
+declaration, states are stationary (ie. the FSM will remain
+in the current state).
+
+The initial state of an FSM is always the first state declared.
+
+##### OUTPUT DECODE ASSERTION
+
+After any state transition declaration, a list of assignements
+can be made.  These assignments only take place when the condition
+defined by the preceding state transition declaration line
+evaluates to true.
+
+For example:
+
+    IDLE -> RUNNING if start
+      pulse = 1'b1
+
+Indicates that "pulse" will pulse high for one cycle, when in
+the IDLE state and the "start" signal is active.
+
+To declare outputs that should be true by default when in
+a given state, use the "state:" declaration.  For example:
+
+    RUNNING:
+      is_running = 1'b1
+      bar_the_foo = 1'b1
+    RUNNING -> IDLE if done
+      bar_the_foo = 1'b0
+      # but is_running is still asserted
+
+All variables assigned to by output decode assertions should be
+pre-declared as 'reg' variables.
+
+##### GENERAL
+
+The generated FSM implementation exports its state variable as
+a net named:
+
+    <name>_state
+
+The states are identified by localparam declarations.  These
+constants are given names by converting the FSM name and the
+state name to all upper case characters, and concatenating thus:
+
+    <NAME>_<STATE>
+
+For example:
+
+    /**FSM copier
+      default:
+        read = 1'b0
+        write = 1'b0
+      idle -> read1 if start
+         read = 1'b1
+      read1 -> read2
+      read2 -> read3
+      read3 -> write1
+      write1:
+        write = 1'b1
+      write1 -> write2 if ack
+      write2 -> idle
+    */
+
+The generated FSM will export a net named "copier_state," and
+will also export localparam symbols with names such as
+"COPIER_IDLE", "COPIER_READ1", etc.
+
+Note that the default transitions "idle -> idle" and "write1 ->
+write1" are implicit.
+
+##### OPTIONS
+
+If the "--enum" option is specified on the first line of the FSM macro, then an
+enum is used to generate the state variables instead of a bitvector and a set
+of localparam declarations.
+
+EOT
+
+sub expand_fsm($$) {
+  my $self = shift;
+  my $macro = shift;
+  $self->expand_generic_fsm($macro, 0);
+}
+
+
+sub expand_fsm1($$) {
+  my $self = shift;
+  my $macro = shift;
+  $self->expand_generic_fsm($macro, 1);
+}
+
+sub expand_generic_fsm($$$) {
+  my $self = shift;
+  my $macro = shift;
+  my $onehot = shift;
+
+  my $fsm = new FSM();
+  $fsm->parse_macro($macro);
+  $fsm->set_one_hot($onehot);
+  $fsm->generate_verilog();
+}
+
+$MacroHelp{'TIEOUTPUTSTOZERO'} = <<EOT ;
+This macro can be used to automatically tie all outputs of the current
+module to zeroes, enabling quick creation of stub modules.
+
+For example:
+
+    module foo_stub(
+      input logic a,
+      output logic b, c, d);
+
+    /**TIEOUTPUTSTOZERO**/
+
+    endmodule
+
+Expands to:
+
+    module foo_stub(
+      input logic a,
+      output logic b, c, d);
+
+    /**TIEOUTPUTSTOZERO**/
+    /*PPSTART*/
+    assign b = '0;
+    assign c = '0;
+    assign d = '0;
+    /*PPSTOP*/
+
+    endmodule
+
+EOT
+
+sub expand_tieoutputs($$) {
+  my $self = shift;
+  my $macro = shift;
+
+  # parse the input and output ports of this module
+  my $my_interface = new ModuleSpec()->parse_prototype($self->{text});
+
+  # generate an assignment for every output
+  foreach my $portname (@{$my_interface->{port_order}}) {
+    my $port = $my_interface->GetPortByName($portname);
+    if ($port->io() eq "output") {
+      print "  assign ${portname} = '0;\n";
+    }
+  }
+}
+
+
+package main;
+
+our @OPTIONS = (
+   ["-v --verbose",   "Turn on verbose reporting."],
+   ["-q --quieter",   "Make verilogpp quieter."],
+   ["-k --check",     "Does a dry run, checks if changes would be made."],
+   ["-c --config",    "Specify a configuration file."],
+   ["-t --trim",      "Trim all macro expansions out, returning file to an " .
+                      "un-pre-processed state."],
+   ["-i --incdir dir", "Appends dir to the list of paths to search for " .
+                       "included files"],
+   ["-r --recursive",  "Causes the preprocessor to recursively reprocess " .
+                       "all dependencies for the current file as well."],
+   ["-p --prettyprint","Set to enable extra formatting and annotations in " .
+                       "generated code."],
+   ["-f --fsm_state_suffix",  "Suffix string added to FSM state decode wires."],
+   ["-h --help",       "This message."],
+   ["-l --longhelp",   "Dumps macro documentation as well."],
+   ["--mdhelp",        "Dumps user manual as markdown."],
+);
+
+sub Usage {
+  print STDERR "verilogpp [options] [files]\n\nOptions:\n";
+  for my $o (@OPTIONS) {
+    my $opts = $o->[0];
+    my $desc = wrap($o->[1], " ", "\n                       ", 78 - 23);
+    printf STDERR "  %-20s %s\n", $opts, $desc;
+  }
+
+  if ($HELP) {
+    print qq(Supported macros:\n);
+    foreach my $m (sort keys %CodeModule::MacroHelp) {
+      print "%" x 78, "\n",
+            "%% $m\n",
+            "%" x 78, "\n",
+            $CodeModule::MacroHelp{$m}, "\n";
+    }
+  }
+}
+
+# TODO(jonmayer): move this to the top of this file.
+our $INTRODUCTION = <<EOT ;
+## Introduction
+
+`verilogpp` is a preprocessor that operates on a set of
+verilog files.  It provides functionality roughly equivalent to
+that of the verilog mode for emacs, except that the results are
+maintainable and repeatable.
+
+Verilogpp macros are always embedded in code as specially formatted
+comments that begin with `/**` rather than the usual `/*`.  See the
+[MACROS](#macros) section below for details.
+
+It operates in two modes:
+
+* Process: When passed a file that ends with the "pp" extension (for example,
+  "foo.svpp"), it creates a preprocessed output file using a filename with the
+  final "pp" token stripped away (for example, "foo.sv").
+
+* In-Place: Otherwise, verilogpp operates in-place on the files it is provided.
+
+##### Generated code
+
+The code generated by verilogpp is always placed between a pair of
+comments that indicate that the code between them is machine-generated
+and should never be hand-editted.  Instead, the generating macro should
+be changed instead, and the code reprocessed by the preprocessor.
+
+The comments that denote machine generated code always look like this:
+
+    /*PPSTART*/
+    ... machine generated code lives here ...
+    /*PPSTOP*/
+
+##### Deprecated macros
+
+The [PERL](#perl), [FIXEDPOINT](#fixedpoint), [REG](#reg), and
+[STRUCT](#struct) macros are deprecated.  They may be dropped in future
+versions of this tool, and new code should avoid using them.
+
+##### Folding generated code
+
+If possible, consider configuring your editor to "fold" all code
+between the PPSTART and PPSTOP comments out of your visual field.
+
+In VIM, you could add the following to your .vimrc file:
+
+    autocmd BufWinEnter,Syntax *.v,*.sv syn region ppoutput
+      \\ start="\\/\\*PPSTART\\*" end="\\*PPSTOP\\*" fold contains=TOP keepend
+    autocmd BufWinEnter,Syntax *.v,*.sv set foldmethod=syntax
+
+##### This document
+
+This user manual is generated directly from the verilogpp source code using the
+`--mdhelp` option.  Please be sure to make improvements there, and regenerate
+this file, rather than editing this file directly.
+
+## Configuration File
+
+TODO(jonmayer): Add documentation for the verilogpp configuration file.
+
+EOT
+
+sub MdHelp {
+  print <<EOT ;
+# Verilogpp User Manual
+
+<!-- This documentation is automatically generated by verilogpp.
+  -- Changes should be made to verilogpp itself. -->
+
+go/verilogpp-user-manual
+
+## Usage
+
+    verilogpp [options] [files]
+
+Options:
+
+EOT
+  print "| Option | Description |\n";
+  print "|--------|-------------|\n";
+  for my $o (@OPTIONS) {
+    print "| $o->[0] | $o->[1] |\n";
+  }
+  print "\n";
+  print $INTRODUCTION;
+  print "\n";
+  print "## Macros\n\n";
+  print "Quick links:\n\n";
+  foreach my $m (sort keys %CodeModule::MacroHelp) {
+    print "*   [${m}](#Macro_${m})\n";
+  }
+  print "\n";
+  foreach my $m (sort keys %CodeModule::MacroHelp) {
+    print "### $m {#Macro_${m}}\n\n";
+    print $CodeModule::MacroHelp{$m};
+    print "\n";
+  }
+}
+
+#############################
+# main
+#############################
+
+# A simple configuration file parser.  I must roll my own, because none of
+# the standard configuration file parsers are easily available within the
+# google environment.
+sub parse_config($) {
+  my $configtext = shift;
+
+  # remove comments
+  $configtext =~ s/(?<!\\)#.*\n/\n/g;  # but not \#
+  $configtext =~ s/\\#/#/g;  # turn \# into #
+
+  foreach my $line (split m/\n/, $configtext) {
+    next if ($line =~ m/^\s*$/);
+    if ($line =~ m/^\s*(\S+)\s*=\s*(\S.*?)\s*$/) {
+      if (!defined($main::config{$1})) {
+        print STDERR "Warning: possible bad configuration key: $1\n";
+      }
+      # Strip quotes around strings
+      my $val = $2;
+      $val =~ s/^"(.*)"$/$1/;
+      $val =~ s/^'(.*)'$/$1/;
+      $main::config{$1} = $val;
+      next;
+    }
+    print STDERR "Warning: bad config directive: $line\n";
+  }
+}
+
+sub load_config($) {
+  my $filename = shift;
+  my $fh = new FileHandle("<$filename")
+    or die ("$filename: $!\n");
+  my $configtext = join("", <$fh>);
+  $fh->close();
+
+  return parse_config($configtext);
+}
+
+sub main {
+  my $changes = 0;
+  my $result = GetOptions("verbose|v" => \$main::verbose,
+                          "quieter|q" => \$main::quieter,
+                          "check|k" => \$main::check,
+                          "trim|t" => \$main::trim,
+                          "recursive|r" => \$main::recursive,
+                          "incdir|i=s" => \@INCDIR,
+                          "config|c=s" => \$main::configfile,
+                          "help|h" => \$help,
+                          "longhelp|l" => \$HELP,
+                          "mdhelp" => \$mdhelp,
+                          "outputfile=s" => \$main::explicit_outputfile,
+                          "manifest=s" => \$main::manifest,
+
+                          # Allow all config options to be specified on cmdline
+                          # TODO(bwc): Make these override config file settings
+                          "clock=s" => \$main::config{"clock"},
+                          "reset_n=s" => \$main::config{"reset_n"},
+                          "synchronous_reset!" =>
+                              \$main::config{"synchronous_reset"},
+                          "path=s" => \$main::config{"path"},
+                          "systemverilog!" => \$main::config{"systemverilog"},
+                          "use_perforce!" => \$main::config{"use_perforce"},
+                          "register_delay=s" =>
+                              \$main::config{"register_delay"},
+                          "autonet_allwires" =>
+                              \$main::config{"autonet_allwires"},
+                          "prettyprint|p!" => \$main::config{"prettyprint"},
+                          "fsm_state_suffix|f=s" =>
+                              \$main::config{"fsm_state_suffix"},
+                          );
+
+  if (!$result) {
+    print STDERR "Bad options.  Bad!\n";
+    Usage();
+    exit 1;
+  }
+  if ($HELP || $help) {
+    Usage();
+    exit 0;
+  }
+  if ($mdhelp) {
+    MdHelp();
+    exit 0;
+  }
+
+  # load configuration
+  if ($main::configfile) {
+    load_config($main::configfile);
+  }
+
+  # load manifest, if enabled
+  if ($main::config{"manifest"}) {
+    $main::manifest = new Manifest($main::config{"manifest"});
+  }
+
+  # if config file is used, put it into the manifest.
+  if ($main::configfile && $main::manifest) {
+    $main::manifest->UpdateManifest($main::configfile);
+  }
+
+  # Process each path supplied on the command line:
+  for my $fn (@ARGV) {
+    my $obj = new CodeModule($fn);
+    $changes += $obj->preprocess();
+  }
+
+  my $file_count = keys %main::PROCESSED;
+  print STDERR "Processed ${file_count} files and made ",
+     (($changes == 1) ? "1 change.\n" : "$changes changes.\n");
+
+  if ($main::check) {
+    # return error if any file needed changes
+    if ($changes > 0) {
+      print STDERR "verilogpp would change files.\n";
+    } else {
+      print STDERR "verilogpp check indicates all files up to date.\n";
+    }
+    exit (($changes > 255) ? 255 : $changes);
+  }
+
+  if ($main::manifest) {
+    $main::manifest->RewriteManifest();
+  }
+  exit 0;
+}
+
+main() unless caller();
+

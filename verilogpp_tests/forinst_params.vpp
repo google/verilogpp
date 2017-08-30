@@ -1,0 +1,30 @@
+/**FORINST bus_keeper.v keeper 1 2 3
+  parameter ID ${enumerator}
+  s/NNN/${enumerator}/g;
+**/
+/*PPSTART*/
+bus_keeper #(
+  .ID(1)) keeper_1 (
+  .clk (clk),
+  .reset_n (reset_n),
+  .busNNN_valid (bus1_valid),
+  .busNNN_in (bus1_in),
+  .busNNN_out (bus1_out)
+);
+bus_keeper #(
+  .ID(2)) keeper_2 (
+  .clk (clk),
+  .reset_n (reset_n),
+  .busNNN_valid (bus2_valid),
+  .busNNN_in (bus2_in),
+  .busNNN_out (bus2_out)
+);
+bus_keeper #(
+  .ID(3)) keeper_3 (
+  .clk (clk),
+  .reset_n (reset_n),
+  .busNNN_valid (bus3_valid),
+  .busNNN_in (bus3_in),
+  .busNNN_out (bus3_out)
+);
+/*PPSTOP*/
