@@ -79,6 +79,14 @@ This user manual is generated directly from the verilogpp source code using the
 `--mdhelp` option.  Please be sure to make improvements there, and regenerate
 this file, rather than editing this file directly.
 
+## License
+
+`verilogpp` is distributed under the terms of the [Apache 2.0 License](LICENSE).
+Please see [CONTRIBUTING](CONTRIBUTING.md) for information on how to contribute.
+
+While Google Inc retains copyright for much of the code of `verilogpp`, this is not
+an official Google product.
+
 ## Configuration File
 
 TODO(jonmayer): Add documentation for the verilogpp configuration file.
@@ -837,12 +845,4 @@ Expands to:
 
     endmodule
 
-
-## License
-
-`verilogpp` is distributed under the terms of the [Apache 2.0 License](LICENSE-2.0.txt).
-Please see [CONTRIBUTING.md] for information on how to contribute.
-
-While Google Inc retains copyright for much of the code of `verilogpp`, this is not
-an official Google product.
 
