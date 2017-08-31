@@ -17,19 +17,19 @@ reg  axi_rlast;
 wire  axi_rready;
 reg [`AXI_RESP_WORD] axi_rresp;
 reg  axi_rvalid;
-reg  backplane_clear_to_send;
-wire  backplane_ready_to_send;
-reg [`DATAFLOW2_COMMAND_WORD] control_input;
-wire [`DATAFLOW2_STATUS_WORD] control_output;
-wire [15:0] data_to_backplane;
-wire  data_to_backplane_valid;
+reg  bum_buffer_overflow;
+reg [`HARD2PARSE_STATUS__WRITE_POINTER_WIDTH-1:0] bum_write_pointer;
+reg  bum_write_pointer_valid;
+reg [`HARD2PARSE_COMMAND_WORD] control_input;
+wire [`HARD2PARSE_STATUS_WORD] control_output;
+wire [15:0] data_to_foobar;
+wire  data_to_foobar_valid;
+reg  foobar_clear_to_send;
+wire  foobar_ready_to_send;
 reg [31:0] in32;
 word_t in_word;
 wire [31:0] out32;
-reg [`DATAFLOW2_COMMAND__SLOT_WIDTH-1:0] slot;
-reg  tbm_buffer_overflow;
-reg [`DATAFLOW2_STATUS__WRITE_POINTER_WIDTH-1:0] tbm_write_pointer;
-reg  tbm_write_pointer_valid;
+reg [`HARD2PARSE_COMMAND__SLOT_WIDTH-1:0] slot;
 /*PPSTOP*/
 
 
@@ -44,18 +44,18 @@ bar u_bar (
 );
 /*PPSTOP*/
 
-/**INST df2.v u_df2**/
+/**INST hard2parse.v u_hard2parse**/
 /*PPSTART*/
-dataflow2_controller u_df2 (
+hard2parse u_hard2parse (
   .clk (clk),
   .reset_n (reset_n),
   .slot (slot),
   .control_input (control_input),
   .control_output (control_output),
-  .backplane_ready_to_send (backplane_ready_to_send),
-  .backplane_clear_to_send (backplane_clear_to_send),
-  .data_to_backplane (data_to_backplane),
-  .data_to_backplane_valid (data_to_backplane_valid),
+  .foobar_ready_to_send (foobar_ready_to_send),
+  .foobar_clear_to_send (foobar_clear_to_send),
+  .data_to_foobar (data_to_foobar),
+  .data_to_foobar_valid (data_to_foobar_valid),
   .axi_arid (axi_arid),
   .axi_arready (axi_arready),
   .axi_araddr (axi_araddr),
@@ -67,9 +67,9 @@ dataflow2_controller u_df2 (
   .axi_rdata (axi_rdata),
   .axi_rlast (axi_rlast),
   .axi_rready (axi_rready),
-  .tbm_buffer_overflow (tbm_buffer_overflow),
-  .tbm_write_pointer_valid (tbm_write_pointer_valid),
-  .tbm_write_pointer (tbm_write_pointer)
+  .bum_buffer_overflow (bum_buffer_overflow),
+  .bum_write_pointer_valid (bum_write_pointer_valid),
+  .bum_write_pointer (bum_write_pointer)
 );
 /*PPSTOP*/
 

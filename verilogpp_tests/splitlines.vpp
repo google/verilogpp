@@ -14,18 +14,18 @@ bar u_bar (
 /*PPSTOP*/
 
 /**INST \
-df2.v u_df2**/
+hard2parse.v u_hard2parse**/
 /*PPSTART*/
-dataflow2_controller u_df2 (
+hard2parse u_hard2parse (
   .clk (clk),
   .reset_n (reset_n),
   .slot (slot),
   .control_input (control_input),
   .control_output (control_output),
-  .backplane_ready_to_send (backplane_ready_to_send),
-  .backplane_clear_to_send (backplane_clear_to_send),
-  .data_to_backplane (data_to_backplane),
-  .data_to_backplane_valid (data_to_backplane_valid),
+  .foobar_ready_to_send (foobar_ready_to_send),
+  .foobar_clear_to_send (foobar_clear_to_send),
+  .data_to_foobar (data_to_foobar),
+  .data_to_foobar_valid (data_to_foobar_valid),
   .axi_arid (axi_arid),
   .axi_arready (axi_arready),
   .axi_araddr (axi_araddr),
@@ -37,9 +37,9 @@ dataflow2_controller u_df2 (
   .axi_rdata (axi_rdata),
   .axi_rlast (axi_rlast),
   .axi_rready (axi_rready),
-  .tbm_buffer_overflow (tbm_buffer_overflow),
-  .tbm_write_pointer_valid (tbm_write_pointer_valid),
-  .tbm_write_pointer (tbm_write_pointer)
+  .bum_buffer_overflow (bum_buffer_overflow),
+  .bum_write_pointer_valid (bum_write_pointer_valid),
+  .bum_write_pointer (bum_write_pointer)
 );
 /*PPSTOP*/
 
