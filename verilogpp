@@ -129,7 +129,6 @@ $config{"systemverilog"} = 1;
 # .svh files are regenerated using SystemVerilog syntax.
 $config{"extension_selects_language"} = 0;
 $config{"disable_always_ff"} = 0;  # disable always_ff in systemverilog code.
-$config{"use_perforce"} = 0;
 $config{"register_delay"} = "#1ns";
 $config{"autonet_allwires"} = 0;
 $config{"prettyprint"} = 0; # Set to enable "pretty" generated code
@@ -324,10 +323,6 @@ sub UpdateManifest {
 
 sub RewriteManifest {
   my $self= shift;
-
-  if ($main::config{"use_perforce"}) {
-    system("/usr/bin/g4", "edit", $self->{manifest_path});
-  }
 
   my $fh = new FileHandle(">$self->{manifest_path}")
     or die("Could not write manifest: $self->{manifest_path}");
@@ -1449,10 +1444,6 @@ sub preprocess {
       $self->{changes}++;
     }
   } elsif ($self->is_changed() || ($outputfile ne $filename)) {
-    if ($main::config{"use_perforce"}) {
-      system("/usr/bin/g4", "edit", $outputfile);
-    }
-
     # make backup if we're running in-place, before overwriting the
     # new file:
     if ($outputfile eq $filename) {
@@ -3091,7 +3082,6 @@ sub main {
                               \$main::config{"synchronous_reset"},
                           "path=s" => \$main::config{"path"},
                           "systemverilog!" => \$main::config{"systemverilog"},
-                          "use_perforce!" => \$main::config{"use_perforce"},
                           "register_delay=s" =>
                               \$main::config{"register_delay"},
                           "autonet_allwires" =>
