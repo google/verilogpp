@@ -81,11 +81,12 @@ this file, rather than editing this file directly.
 
 ## License
 
-`verilogpp` is distributed under the terms of the [Apache 2.0 License](LICENSE).
-Please see [CONTRIBUTING](CONTRIBUTING.md) for information on how to contribute.
+`verilogpp` is distributed under the terms of the [Apache 2.0
+License](LICENSE).  Please see [CONTRIBUTING](CONTRIBUTING.md) for information
+on how to contribute.
 
-While Google Inc retains copyright for much of the code of `verilogpp`, this is not
-an official Google product.
+While Google Inc retains copyright for much of the code of `verilogpp`, this is
+not an official Google product.
 
 ## Configuration File
 
