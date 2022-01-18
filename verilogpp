@@ -756,11 +756,27 @@ sub parse_body_for_extra_interfaces($$) {
   }
 }
 
+# Search INCDIR for a file.
+sub locate_file {
+  my $filename = shift;
+  if (-e $filename) {
+    return $filename;
+  }
+  foreach my $dir (@main::INCDIR) {
+    my $path = File::Spec->catfile($dir, $filename);
+    if (-e $path) {
+      return $path;
+    }
+  }
+  die("Could not find \"$filename\" in @main::INCDIR")
+}
+
 # parses a verilog code module into a prototype object, which contains
 # metadata indicating the i/o interface for the module.
 sub read_prototype {
   my $self = shift;
   my $filename = shift;
+  $filename = locate_file($filename);
   $self->{'filename'} = $filename;
 
   my $fh = new FileHandle("<$filename") or return undef;
