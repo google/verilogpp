@@ -7,9 +7,9 @@ module inst_of_unpacked (
   /**AUTOINTERFACE**/
 /*PPSTART*/
   output wire [7:0] bar,
-  input  wire       fee_en [0:10-1],
-  input  wire [7:0] foo    [0:5],
-  input  wire       foo_en [0:5]
+  input  wire       fee_en[0:10-1],
+  input  wire [7:0] foo[0:5],
+  input  wire       foo_en[0:5]
 /*PPSTOP*/
 );
 
