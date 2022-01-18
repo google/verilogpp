@@ -67,7 +67,7 @@ sub VerifyFile($) {
 sub VerifyManifest() {
   $expected_tests += 2;  # this method adds 2 checks
   ok(-e "./preproc.manifest", "preproc.manifest exists");
-  my $rc = system("diff -c -I verilogpp\$ ./preproc.manifest{.expected,}");
+  my $rc = system("diff -c -I verilogpp\$ ./preproc.manifest.expected ./preproc.manifest");
   is($rc, 0, "preproc.manifest contains expected checksums");
 }
 
