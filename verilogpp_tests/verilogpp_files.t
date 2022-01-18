@@ -26,6 +26,7 @@ use strict;
 use Cwd 'abs_path';
 use Test::More;
 use File::Basename;
+use lib File::Basename::dirname(abs_path($0));
 use File::Temp qw/ tempfile /;
 use test_utils;
 
@@ -43,6 +44,7 @@ my $rc = system($VPP,
                 "--quieter",
                 "-r",
                 "--config=./verilogpp.fortest.rc",
+                "--incdir", "./subdir",
                 @testfiles);
 # we don't check return codes as some test files are expected to fail.
 
