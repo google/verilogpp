@@ -768,7 +768,8 @@ sub locate_file {
       return $path;
     }
   }
-  die("Could not find \"$filename\" in @main::INCDIR")
+  warn("Could not find \"$filename\" in @main::INCDIR");
+  return $filename;
 }
 
 # parses a verilog code module into a prototype object, which contains
