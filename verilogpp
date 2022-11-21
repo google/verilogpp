@@ -142,6 +142,7 @@ $config{"generated_code_marker"} = "";  # extra indicator for generated text
 $config{"manifest"} = "";  # if set, update a manifest file when files are
                            # reprocessed.
 $config{"enum_states"} = 1;  # enumerate states by default
+$config{"compact_ports"} = 0;  # use ".clk" instead of .clk(clk)"
 
 # global md5sum registry
 our $manifest = undef;
@@ -1787,6 +1788,10 @@ sub expand_forinst($$) {
   if ($macro =~ s/^(.*)--pretty(?:print)?/$1/) {
     $prettyprint = 1;
   }
+  my $compact_ports = $main::config{"compact_ports"};
+  if ($macro =~ s/^(.*)--compact(?:_ports)?/$1/) {
+    $compact_ports = 1;
+  }
 
   ($path, $instance, $macro) = split(m/\s+/, $macro, 3);
   my $itemsref;
@@ -1797,8 +1802,9 @@ sub expand_forinst($$) {
   for (my $i = 0; $i <= $#{$itemsref}; $i++) {
     my $enumerator = $itemsref->[$i];
     my $instancename = "${instance}_${enumerator}";
-    $self->expand_instantiate_with_prototype($prototype, $instancename,
-                                             $macro, $enumerator, $prettyprint);
+    $self->expand_instantiate_with_prototype(
+      $prototype, $instancename, $macro, $enumerator, $prettyprint,
+      $compact_ports);
   }
 }
 
@@ -1881,6 +1887,10 @@ sub expand_instantiate($$) {
   if ($macro =~ s/^(.*)--pretty(?:print)?/$1/) {
     $prettyprint = 1;
   }
+  my $compact_ports = $main::config{"compact_ports"};
+  if ($macro =~ s/^(.*)--compact(?:_ports)?/$1/) {
+    $compact_ports = 1;
+  }
 
   if (!($macro =~ s/^\s*(\S+)\s+(\S+)\s*//so)) {
     report_error("Badly formatted INST macro");
@@ -1891,7 +1901,7 @@ sub expand_instantiate($$) {
   my $prototype = $self->get_prototype_from_file($filename);
 
   $self->expand_instantiate_with_prototype($prototype, $instancename, $macro,
-    undef, $prettyprint);
+    undef, $prettyprint, $compact_ports);
 }
 
 sub expand_instantiate_with_prototype {
@@ -1901,6 +1911,7 @@ sub expand_instantiate_with_prototype {
   my $macro = shift;
   my $enumerator = shift;
   my $prettyprint = shift;
+  my $compact_ports = shift;
 
   if (!defined($enumerator)) {
     my @digits = ($instancename =~ m/(\d+)/g);
@@ -1945,7 +1956,11 @@ sub expand_instantiate_with_prototype {
         $hookup .= " $width";
       }
     } else {
-      $hookup = ".${signal} (${mapped_signal})";
+      if (($compact_ports) && ($signal eq $mapped_signal)) {
+        $hookup = ".${signal}";
+      } else {
+        $hookup = ".${signal} (${mapped_signal})";
+      }
     }
 
     push(@d, $hookup);
