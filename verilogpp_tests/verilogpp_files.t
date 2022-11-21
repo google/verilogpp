@@ -45,6 +45,8 @@ my $rc = system($VPP,
                 "-r",
                 "--config=./verilogpp.fortest.rc",
                 "--incdir", "./subdir",
+                "--incdir", "./notasubdir",
+                "--incdir", ".",
                 @testfiles);
 # we don't check return codes as some test files are expected to fail.
 

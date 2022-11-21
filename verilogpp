@@ -759,10 +759,16 @@ sub parse_body_for_extra_interfaces($$) {
 # Search INCDIR for a file.
 sub locate_file {
   my $filename = shift;
+  if (!defined($filename)) {
+    die("locate_file() called with undefined filename argument");
+  }
   if (-e $filename) {
     return $filename;
   }
   foreach my $dir (@main::INCDIR) {
+    if (!defined($dir)) {
+      warn("Undefined value in INCDIR: @main::INCDIR");
+    }
     my $path = File::Spec->catfile($dir, $filename);
     if (-e $path) {
       return $path;
