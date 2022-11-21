@@ -767,7 +767,8 @@ sub locate_file {
   }
   foreach my $dir (@main::INCDIR) {
     if (!defined($dir)) {
-      warn("Undefined value in INCDIR: @main::INCDIR");
+      # GetOptions is leaving an undefined value in this list for some reason?
+      next;
     }
     my $path = File::Spec->catfile($dir, $filename);
     if (-e $path) {
