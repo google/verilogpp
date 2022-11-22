@@ -168,6 +168,14 @@ sub case() {
   return $config{"systemverilog"} ? "unique case" : "case";
 }
 
+sub expand_template ($\%) {
+  my $template = shift;
+  my %ctx = %{shift()};
+  my $output = $template;
+  $output =~ s/\{\{\s*([a-zA-Z0-9_]+)\s*\}\}/$ctx{$1}/g;
+  return $output;
+}
+
 # returns a correctly constructed, inferred register.
 sub register {
   my (%options) = @_;
@@ -178,6 +186,7 @@ sub register {
   my $clk = $options{"CLOCK"} || $config{"clock"};
   my $reset_n =$options{"RESET_N"} || $config{"reset_n"};
   my $delay = $options{"DELAY"} || $config{"register_delay"};
+  my $template = $config{"reg_template"} || "";
 
   my $ifclause = "";
   if ($cond ne "1'b1") {
@@ -186,6 +195,22 @@ sub register {
 
   if ($delay eq "none") { $delay = ""; }
   else { $delay =~ s/\s*$/ /; }
+
+  my %ctx = {
+    ALWAYS_FF => always_ff(),
+    CLK => $clk,
+    SRESET => $config{"synchronous_reset"},
+    RESET_N => $reset_n,
+    REG => $reg,
+    NEXT => $next,
+    DELAY => $delay,
+    INITIAL => $initial,
+    IFCLAUSE => $ifclause,
+    LE => $cond};
+
+  if ($template ne "") {
+    return expand_template($template, %ctx);
+  }
 
   return join("",
       always_ff(),
