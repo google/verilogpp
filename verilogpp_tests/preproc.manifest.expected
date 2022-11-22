@@ -1,4 +1,4 @@
-af1707f50e60ac9193fe364b05437f83  ../verilogpp
+ae7c13b8984fc47c8138c29eb2758e01  ../verilogpp
 ffa007a4806acae2aa22fae129423ebb  autocb.vpp
 e650ff66cc1639b0412f5194bcbeb6f0  autoif.vpp
 d8bf9099c93900253867a09b87c975c1  bar.vpp
@@ -14,6 +14,7 @@ d538a5583cdba57c4ebaeffa3bc1889b  incdir_test.vpp
 802bb1901a42b4b1cb6baaa9eb9234b3  inst_of_signed_thing.vpp
 bba772325acb574bf5f74edd944818d5  inst_of_unpacked.vpp
 6341c22c6d129c027a73582aa5407208  instpretty.vpp
+9e61861cb151968a07324288211f0603  instv2.vpp
 7c439f5cdf30af3f4ddac68d373127dd  mark.vpp
 3e14e1391b4efd60fabaf617a4e8709e  missing_file.vpp
 ac8a33665c3df3cc3c4bf0dc59175d82  multiclock.v

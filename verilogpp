@@ -135,6 +135,7 @@ $config{"disable_always_ff"} = 0;  # disable always_ff in systemverilog code.
 $config{"register_delay"} = "#1ns";
 $config{"autonet_allwires"} = 0;
 $config{"prettyprint"} = 0; # Set to enable "pretty" generated code
+$config{"style"} = "default";
 $config{"fsm_state_suffix"} = ""; # String appended to state signals
 $config{"enable_footer"} = 1;  # writes a timestamp comment at end of each file
 $config{"depend_mode"} = 0;  # generate a dependency comment instead of `include.
@@ -1817,6 +1818,11 @@ sub expand_forinst($$) {
   if ($macro =~ s/^(.*)--compact(?:_ports)?/$1/) {
     $compact_ports = 1;
   }
+  my $style = $main::config{"style"};
+  if ($macro =~ s/^(.*)--style=(\S+)/$1/) {
+    $style = $2;
+    if ($style eq "pretty") { $prettyprint = 1; }
+  }
 
   ($path, $instance, $macro) = split(m/\s+/, $macro, 3);
   my $itemsref;
@@ -1829,18 +1835,19 @@ sub expand_forinst($$) {
     my $instancename = "${instance}_${enumerator}";
     $self->expand_instantiate_with_prototype(
       $prototype, $instancename, $macro, $enumerator, $prettyprint,
-      $compact_ports);
+      $compact_ports, $style);
   }
 }
 
 $MacroHelp{'INST'} = <<EOT ;
-    /**INST <path> <instance>
+    /**INST <path> <instance> [<options>]
     <specifications> **/
 
 Where:
 
 * "path" is the path to the module to be instantiated.
 * "instance" is the instance name to use for the instantiation.
+* "options" is an optional list of flags.
 * "specifications" is a list of zero or more lines used to map port names
   onto signal names.  This can take a couple of different forms.
 
@@ -1870,6 +1877,13 @@ automatically generate correct net declarations for all nets mapped onto the
 ports of INST-instantiated submodules.  Additionally, the AUTOINTERFACE macro
 can be used to propagate unbound ports from INST-instantiated submodules to the
 module interface.
+
+Options:
+
+* --pretty  Turns on "pretty print" style (equivalent to --style=pretty).
+* --style   Sets the output style ("default", "v2", "pretty")
+* --compact Use compact naming for ports whose names match the connecting
+            signal (ie. ".clk" instead of ".clk(clk)").
 
 See also: the AUTONET, AUTOINTERFACE, and FORINST macros.
 
@@ -1916,6 +1930,11 @@ sub expand_instantiate($$) {
   if ($macro =~ s/^(.*)--compact(?:_ports)?/$1/) {
     $compact_ports = 1;
   }
+  my $style = $main::config{"style"};
+  if ($macro =~ s/^(.*)--style=(\S+)/$1/) {
+    $style = $2;
+    if ($style eq "pretty") { $prettyprint = 1; }
+  }
 
   if (!($macro =~ s/^\s*(\S+)\s+(\S+)\s*//so)) {
     report_error("Badly formatted INST macro");
@@ -1926,7 +1945,7 @@ sub expand_instantiate($$) {
   my $prototype = $self->get_prototype_from_file($filename);
 
   $self->expand_instantiate_with_prototype($prototype, $instancename, $macro,
-    undef, $prettyprint, $compact_ports);
+    undef, $prettyprint, $compact_ports, $style);
 }
 
 sub expand_instantiate_with_prototype {
@@ -1937,6 +1956,7 @@ sub expand_instantiate_with_prototype {
   my $enumerator = shift;
   my $prettyprint = shift;
   my $compact_ports = shift;
+  my $style = shift;
 
   if (!defined($enumerator)) {
     my @digits = ($instancename =~ m/(\d+)/g);
@@ -1964,17 +1984,19 @@ sub expand_instantiate_with_prototype {
   # map ports onto signals:
   #
   my @d = ();
+  my @list_of_hookup_arrs = ();
   foreach my $signal (@signals) {
     my $mapped_signal = $self->apply_mapper($mapper, $signal, $enumerator);
 
     my $hookup;
+    my $hookup_arr = ['', '', ''];  # port, signal, comment
     my $width = $prototype->{ports}->{$signal}->width();
     # expand any Parameters within the $width expression:
     foreach my $key (keys %{$mapper->{PARAMS}}) {
       $width =~ s/\b${key}\b/$mapper->{PARAMS}->{$key}/g;
     }
+    my $dir = $prototype->{ports}->{$signal}->io();
     if ($prettyprint) {
-      my $dir = $prototype->{ports}->{$signal}->io();
       $hookup = sprintf ".%-25s (%-25s) // %6s",
           $signal, $mapped_signal, $dir;
       if ($width ne "") {
@@ -1987,14 +2009,46 @@ sub expand_instantiate_with_prototype {
         $hookup = ".${signal} (${mapped_signal})";
       }
     }
+    if ($signal eq $mapped_signal) {
+      $hookup_arr->[0] = ".${signal},";
+      $hookup_arr->[1] = "";
+    } else {
+      $hookup_arr->[0] = ".${signal}";
+      $hookup_arr->[1] = "(${mapped_signal}),";
+    }
+    $hookup_arr->[2] = "// ${dir}";
 
     push(@d, $hookup);
+    push(@list_of_hookup_arrs, $hookup_arr);
     $self->keep_track_of_used_net($prototype, $signal, $mapped_signal, $mapper);
   }
+  # trim final comma from last port:
+  $list_of_hookup_arrs[-1]->[0] =~ s/,$//;
+  $list_of_hookup_arrs[-1]->[1] =~ s/,$//;
 
   #
   # print module instantiation
   #
+  if ($style =~ m/\bv2\b/) {
+    print "${mod} ";
+    my $first_indent = "  ";
+    my $conjunction = ",\n${first_indent}";
+    if (%{$mapper->{PARAMS}}) {
+      print "#(\n";
+      print $first_indent,
+            join($conjunction, @params),
+            "\n) ";
+    }
+    if ($#list_of_hookup_arrs >= 0) {
+      print "${instancename} (\n";
+      print $first_indent, &main::TabularAlign(\@list_of_hookup_arrs, "\n${first_indent}"),"\n);\n";
+    } else {
+      # module has no ports.
+      print "${instancename} ();\n";
+    }
+    return;
+  }
+  # default style:
   print "${mod} ";
   # When in pretty-print mode, line up commas on the left
   my $first_indent = ($prettyprint) ? "   " : "  ";
@@ -3175,6 +3229,7 @@ sub main {
                           "autonet_allwires" =>
                               \$main::config{"autonet_allwires"},
                           "prettyprint|p!" => \$main::config{"prettyprint"},
+                          "style=s" => \$main::config{"style"},
                           "fsm_state_suffix|f=s" =>
                               \$main::config{"fsm_state_suffix"},
                           );
