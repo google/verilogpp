@@ -11,7 +11,7 @@ d965329fce21a475bbd102e30793200c  foo.vpp
 7e7937f60d93529d3d343c2594b994c4  fsm.vpp
 446a4f65830a19a56d67daa984991188  hard2parse.v
 d538a5583cdba57c4ebaeffa3bc1889b  incdir_test.vpp
-52049a18dd3b41e6968d3334596a0f08  inst_of_mod_with_interface.vpp
+1ba43f8894525f9d5cac017303322b80  inst_of_mod_with_interface.vpp
 802bb1901a42b4b1cb6baaa9eb9234b3  inst_of_signed_thing.vpp
 fe40f665771b6330bafa41add7135570  inst_of_typed_module.vpp
 bba772325acb574bf5f74edd944818d5  inst_of_unpacked.vpp
