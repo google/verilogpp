@@ -721,6 +721,10 @@ sub parse_interface($$) {
       $width = '';
       shift(@tokens);
     }
+    if ($tokens[0] =~ m/^([a-zA-Z0-9_]+)\.([a-zA-Z0-9_]+)$/) {
+      $tokens[0] = $1;
+      $io = "modport $1.$2";  # a special kind of inout
+    }
     my $unpacked = [];
     while ($tokens[$#tokens] =~ m/^\[.*\]$/) {
       unshift(@$unpacked, pop(@tokens));
@@ -1196,7 +1200,7 @@ sub init {
   $self->{width} = shift;
   $self->{unpacked} = undef;
   # Count the ports this net is connected to:
-  $self->{count} = { 'input' => 0, 'output' => 0, 'inout' => 0 };
+  $self->{count} = { 'input' => 0, 'output' => 0, 'inout' => 0, 'modport' => 0 };
 }
 
 sub set_unpacked($$) {
@@ -1217,6 +1221,7 @@ sub width {
 sub CountConnection {
   my $self = shift;
   my $dir = shift;
+  if ($dir =~ m/^modport /) { $dir = "modport"; }
   # Indicate that this signal is connected to a port of the indicated type.
   $self->{count}->{$dir} += 1;
 }
@@ -2407,7 +2412,9 @@ sub expand_autonet($$) {
     # determine what to initialize the register too, if needed.
     my $assignment = "";  # empty string by default
     if ($init) {
-      if ($ref->NumberOfConnections('inout') > 0) {
+      if ($ref->NumberOfConnections('modport') > 0) {
+        $assignment = "";
+      } elsif ($ref->NumberOfConnections('inout') > 0) {
         $assignment = " = 'Z";
       } elsif ($ref->NumberOfConnections('output') == 0) {
         $assignment = " = '0";

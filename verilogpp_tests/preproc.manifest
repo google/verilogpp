@@ -1,4 +1,4 @@
-995379e19a58ee1e37613e4bc8a74d45  ../verilogpp
+7038f5e34610f3b5218d5c82b77d1448  ../verilogpp
 ffa007a4806acae2aa22fae129423ebb  autocb.vpp
 e650ff66cc1639b0412f5194bcbeb6f0  autoif.vpp
 d8bf9099c93900253867a09b87c975c1  bar.vpp
@@ -11,13 +11,15 @@ d965329fce21a475bbd102e30793200c  foo.vpp
 7e7937f60d93529d3d343c2594b994c4  fsm.vpp
 446a4f65830a19a56d67daa984991188  hard2parse.v
 d538a5583cdba57c4ebaeffa3bc1889b  incdir_test.vpp
+52049a18dd3b41e6968d3334596a0f08  inst_of_mod_with_interface.vpp
 802bb1901a42b4b1cb6baaa9eb9234b3  inst_of_signed_thing.vpp
-381ccf57a2d08c8b3c481ffd5cf18250  inst_of_typed_module.vpp
+fe40f665771b6330bafa41add7135570  inst_of_typed_module.vpp
 bba772325acb574bf5f74edd944818d5  inst_of_unpacked.vpp
 6341c22c6d129c027a73582aa5407208  instpretty.vpp
 9e61861cb151968a07324288211f0603  instv2.vpp
 7c439f5cdf30af3f4ddac68d373127dd  mark.vpp
 3e14e1391b4efd60fabaf617a4e8709e  missing_file.vpp
+bc8627ca8d97ff3344ee3396b924d568  mod_with_interface.v
 ac8a33665c3df3cc3c4bf0dc59175d82  multiclock.v
 cbf93af9a193c10198bdee6728bb5418  parameter_substitution.vpp
 a1b6387c90958d801423d77dc8c9ba8e  signed_thing.v
