@@ -615,7 +615,7 @@ sub extract_module_interface($$) {
   my ($module, $parameters, $interface, $code);
   # try to match "module foo (a, b, c);"
   if ($verilog =~ m/^\s*module\s+
-                    (\S+?)\s*
+                    ([a-zA-Z0-9_]+?)\s*
                     \(\s*(.*?)\s*\)\s*;\s*
                     (.*?)
                     endmodule/xmso) {
@@ -627,7 +627,7 @@ sub extract_module_interface($$) {
   # try to match "module foo #(a, b, c) (d, e, f);"
   elsif ($verilog =~ m/
     ^\s*module\s+
-    (\S+?)\s+
+    ([a-zA-Z0-9_]+?)\s*
     \#\s*\(\s*(.*?)\s*\)\s*
     \(\s*(.*?)\s*\)\s*;\s*
     (.*?)
@@ -640,7 +640,7 @@ sub extract_module_interface($$) {
   # try to match "module foo;"
   elsif ($verilog =~ m/
     ^\s*module\s+
-    (\S+?)
+    ([a-zA-Z0-9_]+?)
     \s*;\s*
     (.*?)
     endmodule/xmso) {
