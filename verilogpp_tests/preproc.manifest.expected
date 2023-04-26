@@ -1,4 +1,4 @@
-bfc091372e6a995de686ad2518ac2f0b  ../verilogpp
+1138539acc1eaadcaadd3ef0a489201f  ../verilogpp
 ffa007a4806acae2aa22fae129423ebb  autocb.vpp
 e650ff66cc1639b0412f5194bcbeb6f0  autoif.vpp
 d8bf9099c93900253867a09b87c975c1  bar.vpp
@@ -11,6 +11,7 @@ d965329fce21a475bbd102e30793200c  foo.vpp
 7e7937f60d93529d3d343c2594b994c4  fsm.vpp
 446a4f65830a19a56d67daa984991188  hard2parse.v
 d538a5583cdba57c4ebaeffa3bc1889b  incdir_test.vpp
+51ba5116e93d3252c007296324ffce94  inst_locparam.vpp
 40601cad657d19cf7de45cdb08a1f827  inst_non_ansi.vpp
 1ba43f8894525f9d5cac017303322b80  inst_of_mod_with_interface.vpp
 802bb1901a42b4b1cb6baaa9eb9234b3  inst_of_signed_thing.vpp
@@ -18,6 +19,7 @@ fe40f665771b6330bafa41add7135570  inst_of_typed_module.vpp
 bba772325acb574bf5f74edd944818d5  inst_of_unpacked.vpp
 6341c22c6d129c027a73582aa5407208  instpretty.vpp
 9e61861cb151968a07324288211f0603  instv2.vpp
+4d568db3f89a79de93fb77cc20d69154  locparam.v
 7c439f5cdf30af3f4ddac68d373127dd  mark.vpp
 3e14e1391b4efd60fabaf617a4e8709e  missing_file.vpp
 bc8627ca8d97ff3344ee3396b924d568  mod_with_interface.v

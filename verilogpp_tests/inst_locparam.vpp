@@ -1,0 +1,33 @@
+// inst_of_locparam instantiates an locparam from locparam.v
+
+module inst_locparam (
+  input wire clk,
+  /**AUTOINTERFACE**/
+/*PPSTART*/
+  input  wire [8-1:0]   a,
+  input  wire [2*8-1:0] b,
+  output wire [8-1:0]   c
+/*PPSTOP*/
+
+  input wire reset_n );
+
+/**AUTONET --init **/
+/*PPSTART*/
+wire [8-1:0] c;
+/*PPSTOP*/
+
+
+/**INST locparam.v u_locparam
+localparam FOO 8
+**/
+/*PPSTART*/
+locparam u_locparam (
+  .clk (clk),
+  .a (a),
+  .b (b),
+  .c (c)
+);
+/*PPSTOP*/
+
+
+endmodule

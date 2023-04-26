@@ -488,6 +488,12 @@ sub AsNet($$$) {
       $unpacked->[$i] =~ s/\b${key}\b/$mapper->{PARAMS}->{$key}/g;
     }
   }
+  foreach my $key (keys %{$mapper->{LOCALPARAMS}}) {
+    $width =~ s/\b${key}\b/$mapper->{LOCALPARAMS}->{$key}/g;
+    for (my $i = 0; $i <= $#{$unpacked}; $i++) {
+      $unpacked->[$i] =~ s/\b${key}\b/$mapper->{LOCALPARAMS}->{$key}/g;
+    }
+  }
   my $n = new Net($mapped_signal, $width);
   if ($#{$unpacked} >= 0) {
     $n->set_unpacked($unpacked);
@@ -1632,6 +1638,11 @@ sub parse_instantiate_macro($$) {
   }
   $mapper->{PARAMS} = \%PARAMS;
   $mapper->{PARAM_KEYS} = \@PARAM_KEYS;
+  my %LOCALPARAMS = ();
+  while ($macro =~ s/^\s*localparam\s+(\S+)\s+(\S.*?)\s*$//mso) {
+    $LOCALPARAMS{$1} = $2;
+  }
+  $mapper->{LOCALPARAMS} = \%LOCALPARAMS;
 
   #
   # parse out overrides
@@ -1872,6 +1883,17 @@ Transformation of port names onto signal names occurs by applying a
 set of transformation rules onto the port name to produce the signal
 name that port should connect to.
 
+Some modules internally define local parameters which then leak
+out of the module into the module interface.  These local localparams
+can be handled by manually computing the correct value for each
+parameter, and then overriding the symbolic name of the parameter
+in the port width.  This can be specified like this:
+
+    localparam <param-name> <param-value>
+
+Think of "localparam" as being the same as "parameter", except that a
+parameter isn't added to the "#(...)" clause of a module instantiation.
+
 The simplest transformation simply maps a port to a signal, like this:
 
      .portname(signalname)
@@ -2003,6 +2025,10 @@ sub expand_instantiate_with_prototype {
     # expand any Parameters within the $width expression:
     foreach my $key (keys %{$mapper->{PARAMS}}) {
       $width =~ s/\b${key}\b/$mapper->{PARAMS}->{$key}/g;
+    }
+    # expand any localparams within the $width expression:
+    foreach my $key (keys %{$mapper->{LOCALPARAMS}}) {
+      $width =~ s/\b${key}\b/$mapper->{LOCALPARAMS}->{$key}/g;
     }
     my $dir = $prototype->{ports}->{$signal}->io();
     if ($prettyprint) {
