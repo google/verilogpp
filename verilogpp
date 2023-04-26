@@ -746,13 +746,16 @@ sub parse_interface($$) {
 }
 
 # older verilog allows inputs and outputs to be declared in the body of
-# the module.  We scan for them here.
+# the module.  We scan for them here.  This parser is a bit less featureful
+# than the verilog-2001 parser.
 sub parse_body_for_extra_interfaces($$) {
   my $self = shift;
   my $code = shift;
 
-  # remove all clocking blocks
-  $code =~ s/^clocking .*?^endclocking//gmso;
+  # remove easy to remove blocks
+  $code =~ s/^clocking .*?^endclocking(?:\s*:\s*\S+)?//gmso;
+  $code =~ s/^function .*?^endfunction(?:\s*:\s*\S+)?//gmso;
+  $code =~ s/^task .*?^endtask(?:\s*:\s*\S+)?//gmso;
 
   # scan for some old-style declarations, too:
   my @blocks = split(m/\s*;\s*/s, $code);

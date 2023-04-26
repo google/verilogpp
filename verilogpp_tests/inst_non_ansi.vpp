@@ -1,0 +1,37 @@
+// inst_of_non_ansi instantiates an non_ansi from non_ansi.v
+
+module inst_non_ansi (
+  input wire clk,
+  /**AUTOINTERFACE**/
+/*PPSTART*/
+  input  wire [BYTES-1:0] a,
+  input  wire             b,
+  input  wire [WIDTH-1:0] c,
+  output wire             y
+/*PPSTOP*/
+
+  input wire reset_n );
+
+/**AUTONET --init **/
+/*PPSTART*/
+wire  y;
+/*PPSTOP*/
+
+
+/**INST non_ansi.v u_non_ansi
+parameter ID 10
+**/
+/*PPSTART*/
+non_ansi #(
+  .ID(10)) u_non_ansi (
+  .clk (clk),
+  .a (a),
+  .b (b),
+  .c (c),
+  .y (y),
+  .logic clk (logic clk)
+);
+/*PPSTOP*/
+
+
+endmodule
