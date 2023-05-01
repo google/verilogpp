@@ -145,6 +145,8 @@ $config{"manifest"} = "";  # if set, update a manifest file when files are
                            # reprocessed.
 $config{"enum_states"} = 1;  # enumerate states by default
 $config{"compact_ports"} = 0;  # use ".clk" instead of .clk(clk)"
+$config{"omit_empty"} = 0;  # if enables, will omit empty macro expansions.
+$config{"subpaths"} = ["."];  # search these subpaths beneath each INCDIR path for files.
 
 # global md5sum registry
 our $manifest = undef;
@@ -811,9 +813,11 @@ sub locate_file {
       # GetOptions is leaving an undefined value in this list for some reason?
       next;
     }
-    my $path = File::Spec->catfile($dir, $filename);
-    if (-e $path) {
-      return $path;
+    foreach my $subdir (@{$main::config{"subpaths"}}) {
+      my $path = File::Spec->catfile($dir, $subdir, $filename);
+      if (-e $path) {
+        return $path;
+      }
     }
   }
   warn("Could not find \"$filename\" in @main::INCDIR");
@@ -1417,7 +1421,11 @@ sub run_macro($$$) {
   }
 
   # return the expanded macro:
-  return "${text}\n/*PPSTART*/\n${result}\n/*PPSTOP*/\n";
+  if ($result =~ m/^\s*$/ && $main::config{"omit_empty"}) {
+    return "${text}";
+  } else {
+    return "${text}\n/*PPSTART*/\n${result}\n/*PPSTOP*/\n";
+  }
 }
 
 # expand_macro(label, function_ref)
@@ -1446,6 +1454,7 @@ sub expand_all_macros {
 
   # operations
   if (!$main::trim) {
+    $self->expand_macro('CONFIG', \&expand_config);
     $self->expand_macro('FIXEDPOINT', \&expand_fixedpoint);
     $self->expand_macro('PERL', \&expand_perl);
     $self->expand_macro('EXEC', \&expand_exec);
@@ -2615,6 +2624,42 @@ sub expand_reg($$) {
 }
 
 
+$MacroHelp{'CONFIG'} = <<EOT ;
+The CONFIG macro can be used to set verilogpp configuration settings
+within a source file.  The contents of the CONFIG macro are a list
+of key=value attributes, one per line.
+
+Currently, only one attribute is supported:
+
+* "SUBPATH=<path>"
+
+This attribute can be supplied multiple times, to specific multiple subpaths.
+This subpath specifies an additional path component to be searched for files
+referred to by INST and FORINST macros.  The search is performed by iterating
+through each INCDIR path, and then looking for the file in each SUBPATH
+beneath each INCDIR path.
+
+Example:
+
+    /**CONFIG
+       SUBPATH=generated/ip/directory
+       SUBPATH=another/very/long/path/we/dont/want/to/type/over/and/over/again
+    **/
+
+EOT
+sub expand_config($$) {
+  my $self = shift;
+  my $macro = shift;
+  my @lines = split(m/\s*\n\s*/, $macro);
+  foreach my $line (@lines) {
+    my ($key, $value) = ($line =~ m/^\s*(\S+?)\s*=\s*(\S+)\s*$/);
+    if ($key eq "SUBPATH") {
+      push(@{$main::config{"subpaths"}}, $value);
+    } else {
+      report_error("ERROR: unknown config attribute $key");
+    }
+  }
+}
 $MacroHelp{'FIXEDPOINT'} = <<EOT ;
 *DEPRECATED*: please use a struct instead.
 
