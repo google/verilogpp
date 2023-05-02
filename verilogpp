@@ -157,6 +157,31 @@ our %PROCESSED = ();
 # global constants
 our $k_condition_list = "**| CONDITION LIST |**";
 
+# Search INCDIR for a file.
+sub locate_file {
+  my $filename = shift;
+  if (!defined($filename)) {
+    die("locate_file() called with undefined filename argument");
+  }
+  if (-e $filename) {
+    return $filename;
+  }
+  foreach my $dir (@main::INCDIR) {
+    if (!defined($dir)) {
+      # GetOptions is leaving an undefined value in this list for some reason?
+      next;
+    }
+    foreach my $subdir (@{$main::config{"subpaths"}}) {
+      my $path = File::Spec->catfile($dir, $subdir, $filename);
+      if (-e $path) {
+        return $path;
+      }
+    }
+  }
+  warn("Could not find \"$filename\" in @main::INCDIR");
+  return $filename;
+}
+
 # helper functions to return the proper verilog or systemverilog
 # constructs
 sub always_comb() {
@@ -799,37 +824,12 @@ sub parse_body_for_extra_interfaces($$) {
   }
 }
 
-# Search INCDIR for a file.
-sub locate_file {
-  my $filename = shift;
-  if (!defined($filename)) {
-    die("locate_file() called with undefined filename argument");
-  }
-  if (-e $filename) {
-    return $filename;
-  }
-  foreach my $dir (@main::INCDIR) {
-    if (!defined($dir)) {
-      # GetOptions is leaving an undefined value in this list for some reason?
-      next;
-    }
-    foreach my $subdir (@{$main::config{"subpaths"}}) {
-      my $path = File::Spec->catfile($dir, $subdir, $filename);
-      if (-e $path) {
-        return $path;
-      }
-    }
-  }
-  warn("Could not find \"$filename\" in @main::INCDIR");
-  return $filename;
-}
-
 # parses a verilog code module into a prototype object, which contains
 # metadata indicating the i/o interface for the module.
 sub read_prototype {
   my $self = shift;
   my $filename = shift;
-  $filename = locate_file($filename);
+  $filename = main::locate_file($filename);
   $self->{'filename'} = $filename;
 
   my $fh = new FileHandle("<$filename") or return undef;
@@ -1614,7 +1614,7 @@ sub recursively_process_all_dependencies {
   my $filename = shift;
   my $caller = shift;
   my $changes = 0;
-  my $path = normalize_path($filename);
+  my $path = main::locate_file($filename);
   if ((! -e $path) && (! -e "${path}pp")) {
     warn "ERROR: File \"$caller->{srcfilename}\"\n" .
          "  contains dependency on missing file \"$filename\".";
