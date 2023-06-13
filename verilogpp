@@ -2209,6 +2209,8 @@ sub expand_autonc($$) {
 
     if ($ref->NumberOfConnections('inout') > 0) {
       # ignore inout signals
+    } elsif ($ref->NumberOfConnections('modport') > 0) {
+      # ignore interfaces
     } elsif ($ref->NumberOfConnections('output') == 0) {
       # no drivers, so assign to zero.
       push @tieoffs, $s;
