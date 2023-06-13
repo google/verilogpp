@@ -1469,6 +1469,7 @@ sub expand_all_macros {
     $self->expand_macro('FORINST', \&expand_forinst);
     $self->expand_macro('AUTOTOSTRING', \&expand_autotostring);
     $self->expand_macro('AUTOINC', \&expand_includes);
+    $self->expand_macro('AUTONC', \&expand_autonc);
     # note: AUTOINTERFACE must expand before AUTONET, as it will change
     #       AUTONET's behavior.
     $self->expand_macro('AUTOINTERFACE', \&expand_autointerface);
@@ -2163,6 +2164,72 @@ sub expand_includes($$) {
       print "`endif\n";
     }
     print map {'`include "' . $_ . '"'. "\n";} sort keys %unique;
+  }
+}
+
+$MacroHelp{'AUTONC'} = <<EOT ;
+AUTONC can be used to declare specific nets as no-connects.
+
+The body of this macro is a list of signal names or
+regular expressions to indicate which nets to flag as
+no-connects.
+
+EOT
+sub expand_autonc($$) {
+  my $self = shift;
+  my $macro = shift;
+  my @regexes = ();
+  my @names = ();
+  my @tieoffs = ();
+  my @unused = ();
+  foreach my $line (split(/\s*\n\s*/, $macro)) {
+    chomp($line);
+    if ($line =~ m/^\s*$/) {continue;}
+    if ($line =~ m/^\/(.*)\/$/) {push @regexes, $1;}
+    else {push @names, $line;}
+  }
+
+  my @sigs = sort keys %{$self->{NETS}};
+  foreach my $s (@sigs) {
+    my $ref = $self->{NETS}->{$s};
+
+    my $found = 0;
+    if (grep(/^$s$/, @names)) {
+      $found = 1;
+    } else {
+      foreach my $re (@regexes) {
+        if ($s =~ $re) {
+          $found = 1;
+          last;
+        }
+      }
+    }
+
+    if (!$found) {next;}
+
+    if ($ref->NumberOfConnections('inout') > 0) {
+      # ignore inout signals
+    } elsif ($ref->NumberOfConnections('output') == 0) {
+      # no drivers, so assign to zero.
+      push @tieoffs, $s;
+      $ref->{count}->{output} = 1;
+    } elsif ($ref->NumberOfConnections('input') == 0) {
+      # no loads, so add to lint_unused signal list.
+      push @unused, $s;
+      $ref->{count}->{input} = 1;
+    }
+  }
+
+  if (@tieoffs) {
+    foreach my $s (@tieoffs) {
+      print "assign $s = '0;\n";
+    }
+  }
+  if (@unused) {
+    if (@tieoffs) { print "\n"; }
+    print "logic lint_unused_signals;\n";
+    print "assign lint_unused_signals = |{\n";
+    print "   ",join((",\n   ", @unused)),"\n};\n";
   }
 }
 

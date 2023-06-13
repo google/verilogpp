@@ -1,0 +1,90 @@
+// inst_of_unpacked instantiates an unpacked from unpacked.v
+
+module inst_of_unpacked (
+  input wire clk,
+  input wire reset_n,
+  output [7:0] fee [0:10-1],
+  /**AUTOINTERFACE**/
+/*PPSTART*/
+  input logic       fee_en[0:5],
+  input logic [7:0] fie[0:5],
+  input logic       fie_en[0:5]
+/*PPSTOP*/
+);
+
+/**AUTONET --init **/
+/*PPSTART*/
+logic [7:0] another_output;
+logic [7:0] bar;
+logic [7:0] foo[0:5];
+logic  foo_en[0:5];
+/*PPSTOP*/
+
+/**AUTONC
+  weep
+  woe
+  /output$/
+  bar
+  /^foo/
+**/
+/*PPSTART*/
+assign foo = '0;
+assign foo_en = '0;
+
+logic lint_unused_signals;
+assign lint_unused_signals = |{
+   another_output,
+   bar
+};
+/*PPSTOP*/
+
+
+/**INST unpacked.v u_unpacked **/
+/*PPSTART*/
+unpacked u_unpacked (
+  .clk (clk),
+  .reset_n (reset_n),
+  .foo (foo),
+  .foo_en (foo_en),
+  .bar (bar)
+);
+/*PPSTOP*/
+
+/**INST unpacked.v u_unpacked2
+parameter N 10
+s/^foo/fee/;
+**/
+/*PPSTART*/
+unpacked #(
+  .N(10)) u_unpacked2 (
+  .clk (clk),
+  .reset_n (reset_n),
+  .foo (fee),
+  .foo_en (fee_en),
+  .bar (bar)
+);
+/*PPSTOP*/
+
+/**INST unpacked.v u_unpacked3
+  .bar(another_output)
+  s/foo/fie/;
+**/
+/*PPSTART*/
+unpacked u_unpacked3 (
+  .clk (clk),
+  .reset_n (reset_n),
+  .foo (fie),
+  .foo_en (fie_en),
+  .bar (another_output)
+);
+/*PPSTOP*/
+
+
+endmodule
+
+/*PPSTART*/
+// Source file: /home/jmayer/github/verilogpp/verilogpp_tests/
+//    autonc.vpp
+// preprocessed by user: jmayer
+// preprocessed on: Mon Jun 12 17:12:07 2023
+/*PPSTOP*/
