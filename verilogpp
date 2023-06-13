@@ -2189,9 +2189,16 @@ sub expand_autonc($$) {
     else {push @names, $line;}
   }
 
+  # parse the input and output ports of this module
+  my $my_interface = new ModuleSpec()->parse_prototype($self->{text});
+
   my @sigs = sort keys %{$self->{NETS}};
   foreach my $s (@sigs) {
     my $ref = $self->{NETS}->{$s};
+
+    next if ($my_interface->HasPort($s));
+    next unless ($s =~ m/^[[:alpha:]]/);
+    next if ($s =~ m/\W/);
 
     my $found = 0;
     if (grep(/^$s$/, @names)) {
