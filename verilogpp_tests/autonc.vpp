@@ -6,18 +6,18 @@ module inst_of_unpacked (
   output [7:0] fee [0:10-1],
   /**AUTOINTERFACE**/
 /*PPSTART*/
-  input logic       fee_en[0:5],
-  input logic [7:0] fie[0:5],
-  input logic       fie_en[0:5]
+  input wire       fee_en[0:5],
+  input wire [7:0] fie[0:5],
+  input wire       fie_en[0:5]
 /*PPSTOP*/
 );
 
 /**AUTONET --init **/
 /*PPSTART*/
-logic [7:0] another_output;
-logic [7:0] bar;
-logic [7:0] foo[0:5];
-logic  foo_en[0:5];
+wire [7:0] another_output;
+wire [7:0] bar;
+wire [7:0] foo[0:5];
+wire  foo_en[0:5];
 /*PPSTOP*/
 
 /**AUTONC
@@ -81,10 +81,3 @@ unpacked u_unpacked3 (
 
 
 endmodule
-
-/*PPSTART*/
-// Source file: /home/jmayer/github/verilogpp/verilogpp_tests/
-//    autonc.vpp
-// preprocessed by user: jmayer
-// preprocessed on: Mon Jun 12 17:12:07 2023
-/*PPSTOP*/

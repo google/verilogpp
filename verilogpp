@@ -2170,9 +2170,9 @@ sub expand_includes($$) {
 $MacroHelp{'AUTONC'} = <<EOT ;
 AUTONC can be used to declare specific nets as no-connects.
 
-The body of this macro is a list of signal names or
-regular expressions to indicate which nets to flag as
-no-connects.
+The body of this macro is a list of signal names or regular expressions to
+indicate which nets to flag as no-connects.  Signals that match and
+would otherwise be undriven or unloaded are tied off.
 
 EOT
 sub expand_autonc($$) {
@@ -2395,6 +2395,9 @@ drivers, multiple drivers, or zero load.  Note that verilogpp does not
 fully parse verilog, so AUTONET's warnings are only accurate in designs
 that only contain expansions of INST macros.
 
+If the "--skipif" option is supplied, all signals marked as interfaces
+will be omitted from the net declarations.
+
 If the "--cb" option is supplied, verilogpp will create appropriate clocking
 blocks.  verilogpp's ideas of appropriate clocking blocks are:
 
@@ -2456,6 +2459,11 @@ sub expand_autonet($$) {
     $cb = 1;
   }
 
+  my $skipif = 0;
+  if ($macro =~ s/\s*--?skipifs?\s*//) {
+    $skipif = 1;
+  }
+
   # parse the input and output ports of this module
   my $my_interface = new ModuleSpec()->parse_prototype($self->{text});
   $self->CountAssignments($my_interface);
@@ -2480,6 +2488,10 @@ sub expand_autonet($$) {
     # otherwise, let's figure out what type of net it is and
     # add it to autonets list of nets:
     my $ref = $self->{NETS}->{$s};
+
+    if ($skipif && $ref->NumberOfConnections('modport') > 0) {
+      next;
+    }
 
     my $warning = "";
     if ($warn) {
