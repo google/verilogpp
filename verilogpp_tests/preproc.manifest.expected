@@ -1,4 +1,4 @@
-d7d8c7ca37bc5d397249da3ed1a3f809  ../verilogpp
+a9e0054e53f850720a33ff5bc2cd4e03  ../verilogpp
 ffa007a4806acae2aa22fae129423ebb  autocb.vpp
 e650ff66cc1639b0412f5194bcbeb6f0  autoif.vpp
 ed2dac2b752c5e77dad76c11ae4547a7  autonc.vpp
@@ -7,6 +7,8 @@ adf4397b7b5c4594f27499fc4dd750b7  autonet_skipif.vpp
 d8bf9099c93900253867a09b87c975c1  bar.vpp
 f53ad3ace68d13b0cfa962509f7aac7e  bus_keeper.v
 875e79d3a02ca25709b43c4ec4d996e7  busthing.v
+71cfb5ac057ed1a400735d981bdcc3c7  connect_to_array.vpp
+d458295df0234bb3d7dcbbc5c2d46ab6  drive_one.v
 d965329fce21a475bbd102e30793200c  foo.vpp
 9953d47357b8895179b277cbbeec420e  foreach.vpp
 58099f68bbae4cead0f4515559337e47  forinst.vpp
@@ -30,6 +32,7 @@ ac8a33665c3df3cc3c4bf0dc59175d82  multiclock.v
 cadd7d4192f7ff9e94faa7f2dde190fe  non_ansi.v
 cbf93af9a193c10198bdee6728bb5418  parameter_substitution.vpp
 a1b6387c90958d801423d77dc8c9ba8e  signed_thing.v
+bfdf1016afd58f35cf9192800ddb48ef  sink_two.v
 c549a383ecce9a0fef280d445212504d  splitlines.vpp
 1a8d1a7c8dc9c34f04cba346f62ae596  subdir/submodule.v
 398635838df34237c456fc86d09a22f9  subdir/subpath/module_a.v

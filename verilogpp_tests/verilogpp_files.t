@@ -40,6 +40,11 @@ $expected_tests++;
 
 # run the preprocessor over everything in the test files directory:
 my @testfiles = glob(q(./*.vpp));
+print("argv len = $#ARGV\n");
+if ($#ARGV > -1) {
+  @testfiles = @ARGV;
+}
+print "Running ",join(" ", @testfiles),"\n";
 my $rc = system($VPP,
                 "--quieter",
                 "-r",
@@ -75,6 +80,7 @@ sub VerifyManifest() {
 
 # invoke the preprocessor on these files:
 foreach my $testfile (@testfiles) {
+  print "-------\n";
   VerifyFile($testfile);
 }
 

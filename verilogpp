@@ -93,6 +93,7 @@ EOT
 use strict;
 use warnings;
 use 5.8.0;
+use Data::Dumper qw(Dumper);
 use English qw( -no_match_vars );
 use File::Spec;
 use FileHandle;
@@ -1232,6 +1233,13 @@ sub width {
   return $self->{width};
 }
 
+sub MakeCompatibleWith($$) {
+  my $self = shift;
+  my $other_net = shift;
+  if ($other_net->{width} > $self->{width}) { $self->{width} = $other_net->{width}; }
+  if ($#{$other_net->{unpacked}} > $#{$self->{unpacked}}) { $self->{unpacked} = $other_net->{unpacked}; }
+}
+
 sub CountConnection {
   my $self = shift;
   my $dir = shift;
@@ -1705,15 +1713,19 @@ sub keep_track_of_used_net {
   return if ($signal eq $main::config{"reset_n"});
 
   my $port = $prototype->GetPortByName($signal);
-  if (!defined($self->{NETS}->{$mapped_signal})) {
+  my $normalized_net = $mapped_signal;
+  $normalized_net =~ s/\s*\[ [^\]]* \]\s*//gx;  # strip away slice operators.
+  if (!defined($self->{NETS}->{$normalized_net})) {
     # This is the first time we've encountered this
     # wire.
-    $self->{NETS}->{$mapped_signal} = $port->AsNet($mapped_signal, $mapper);
+    $self->{NETS}->{$normalized_net} = $port->AsNet($normalized_net, $mapper);
+  } else {
+    $self->{NETS}->{$normalized_net}->MakeCompatibleWith($port->AsNet($normalized_net, $mapper));
   }
 
   # update count of loads and drivers:
   {
-    my $ref = $self->{NETS}->{$mapped_signal};
+    my $ref = $self->{NETS}->{$normalized_net};
     my $dir = $prototype->{ports}->{$signal}->io();
     $ref->CountConnection($dir);
   }
