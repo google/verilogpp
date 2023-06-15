@@ -5,15 +5,6 @@ module connect_to_array();
 wire [1:0] bar;
 /*PPSTOP*/
 
-/**INST sink_two.v sink_two
-  .foo(bar)
-**/
-/*PPSTART*/
-drive_one sink_two (
-  .foo (bar)
-);
-/*PPSTOP*/
-
 /**FORINST drive_one.v drive_one 0 1
   .foo(bar[${enumerator}])
 **/
@@ -25,5 +16,15 @@ drive_one drive_one_1 (
   .foo (bar[1])
 );
 /*PPSTOP*/
+
+/**INST sink_two.v sink_two
+  .foo(bar)
+**/
+/*PPSTART*/
+drive_one sink_two (
+  .foo (bar)
+);
+/*PPSTOP*/
+
 
 endmodule : connect_to_array
