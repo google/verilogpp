@@ -1236,7 +1236,9 @@ sub width {
 sub MakeCompatibleWith($$) {
   my $self = shift;
   my $other_net = shift;
-  if ($other_net->{width} > $self->{width}) { $self->{width} = $other_net->{width}; }
+  if (length($other_net->{width}) > length($self->{width})) {
+    $self->{width} = $other_net->{width};
+  }
   if ($#{$other_net->{unpacked}} > $#{$self->{unpacked}}) { $self->{unpacked} = $other_net->{unpacked}; }
 }
 

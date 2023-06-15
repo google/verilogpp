@@ -1,4 +1,4 @@
-a9e0054e53f850720a33ff5bc2cd4e03  ../verilogpp
+8cea671cf8348eb8fb780ce797066d1a  ../verilogpp
 ffa007a4806acae2aa22fae129423ebb  autocb.vpp
 e650ff66cc1639b0412f5194bcbeb6f0  autoif.vpp
 ed2dac2b752c5e77dad76c11ae4547a7  autonc.vpp
@@ -7,7 +7,7 @@ adf4397b7b5c4594f27499fc4dd750b7  autonet_skipif.vpp
 d8bf9099c93900253867a09b87c975c1  bar.vpp
 f53ad3ace68d13b0cfa962509f7aac7e  bus_keeper.v
 875e79d3a02ca25709b43c4ec4d996e7  busthing.v
-71cfb5ac057ed1a400735d981bdcc3c7  connect_to_array.vpp
+c618cbce6095084bf196711642741165  connect_to_array.vpp
 d458295df0234bb3d7dcbbc5c2d46ab6  drive_one.v
 d965329fce21a475bbd102e30793200c  foo.vpp
 9953d47357b8895179b277cbbeec420e  foreach.vpp
