@@ -7,7 +7,7 @@ adf4397b7b5c4594f27499fc4dd750b7  autonet_skipif.vpp
 d8bf9099c93900253867a09b87c975c1  bar.vpp
 f53ad3ace68d13b0cfa962509f7aac7e  bus_keeper.v
 875e79d3a02ca25709b43c4ec4d996e7  busthing.v
-e64578cbbba79b169f1650cadb0c84c2  connect_to_array.vpp
+71cfb5ac057ed1a400735d981bdcc3c7  connect_to_array.vpp
 d458295df0234bb3d7dcbbc5c2d46ab6  drive_one.v
 d965329fce21a475bbd102e30793200c  foo.vpp
 9953d47357b8895179b277cbbeec420e  foreach.vpp
