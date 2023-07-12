@@ -1586,10 +1586,12 @@ sub preprocess {
       chmod 0444, $outputfile;  # Set read-only to minimize accident edits.
     }
 
-    print STDERR "${outputfile}: UPDATED\n";
-  } else {
-    print STDERR "${outputfile}: no change.\n"
-        unless $main::quieter || $main::check;
+    if ($self->is_changed() {
+      print STDERR "${outputfile}: UPDATED\n";
+    } else {
+      print STDERR "${outputfile}: no change.\n"
+          unless $main::quieter || $main::check;
+    }
   }
 
   $self->UpdateManifest();
