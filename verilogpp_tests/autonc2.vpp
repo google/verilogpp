@@ -1,0 +1,75 @@
+// inst_of_unpacked instantiates an unpacked from unpacked.v
+
+module inst_of_unpacked (
+  input wire clk,
+  input wire reset_n,
+  output [7:0] fee [0:10-1],
+  input wire       fee_en[0:5],
+  input wire [7:0] fie[0:5],
+  input wire       fie_en[0:5]
+);
+
+/**AUTONET --init **/
+/*PPSTART*/
+wire [7:0] another_output;
+wire [7:0] bar;
+wire [7:0] foo[0:5];
+wire  foo_en[0:5];
+/*PPSTOP*/
+
+/**AUTONC
+  /.+/
+**/
+/*PPSTART*/
+assign foo = '0;
+assign foo_en = '0;
+
+logic lint_unused_signals;
+assign lint_unused_signals = |{
+   another_output,
+   bar
+};
+/*PPSTOP*/
+
+/**INST unpacked.v u_unpacked **/
+/*PPSTART*/
+unpacked u_unpacked (
+  .clk (clk),
+  .reset_n (reset_n),
+  .foo (foo),
+  .foo_en (foo_en),
+  .bar (bar)
+);
+/*PPSTOP*/
+
+/**INST unpacked.v u_unpacked2
+parameter N 10
+s/^foo/fee/;
+**/
+/*PPSTART*/
+unpacked #(
+  .N(10)) u_unpacked2 (
+  .clk (clk),
+  .reset_n (reset_n),
+  .foo (fee),
+  .foo_en (fee_en),
+  .bar (bar)
+);
+/*PPSTOP*/
+
+/**INST unpacked.v u_unpacked3
+  .bar(another_output)
+  s/foo/fie/;
+**/
+/*PPSTART*/
+unpacked u_unpacked3 (
+  .clk (clk),
+  .reset_n (reset_n),
+  .foo (fie),
+  .foo_en (fie_en),
+  .bar (another_output)
+);
+/*PPSTOP*/
+
+
+endmodule

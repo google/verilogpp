@@ -1586,7 +1586,7 @@ sub preprocess {
       chmod 0444, $outputfile;  # Set read-only to minimize accident edits.
     }
 
-    if ($self->is_changed() {
+    if ($self->is_changed()) {
       print STDERR "${outputfile}: UPDATED\n";
     } else {
       print STDERR "${outputfile}: no change.\n"
