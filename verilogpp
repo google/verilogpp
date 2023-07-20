@@ -95,6 +95,7 @@ use warnings;
 use 5.8.0;
 use Data::Dumper qw(Dumper);
 use English qw( -no_match_vars );
+use File::Basename;
 use File::Spec;
 use FileHandle;
 use Getopt::Long;
@@ -158,6 +159,19 @@ our %PROCESSED = ();
 # global constants
 our $k_condition_list = "**| CONDITION LIST |**";
 
+sub dump_stack {
+  my $i = 0;
+  my ($package, $filename, $line, $subroutine, $hasargs, $wantarray, $evaltext,
+      $is_require, $hints, $bitmask, $hinthash);
+
+  print STDERR "Stack trace:\n";
+  while (($package, $filename, $line, $subroutine, $hasargs, $wantarray, $evaltext,
+      $is_require, $hints, $bitmask, $hinthash) = caller($i)) {
+    print STDERR "# ${i}: ${filename}:${line} ${subroutine}\n";
+    $i++;
+  }
+}
+
 # Search INCDIR for a file.
 sub locate_file {
   my $filename = shift;
@@ -167,6 +181,23 @@ sub locate_file {
   if (-e $filename) {
     return $filename;
   }
+  # check provided paths first, if any:
+  foreach my $dir (@_) {
+    if (!defined($dir)) {
+      # GetOptions is leaving an undefined value in this list for some reason?
+      next;
+    }
+    foreach my $subdir (@{$main::config{"subpaths"}}) {
+      my $path = File::Spec->catfile($dir, $subdir, $filename);
+      if (-e $path) {
+        return $path;
+      }
+      if (-e "${path}pp") {
+        return $path;
+      }
+    }
+  }
+  # check INCDIR paths:
   foreach my $dir (@main::INCDIR) {
     if (!defined($dir)) {
       # GetOptions is leaving an undefined value in this list for some reason?
@@ -175,6 +206,9 @@ sub locate_file {
     foreach my $subdir (@{$main::config{"subpaths"}}) {
       my $path = File::Spec->catfile($dir, $subdir, $filename);
       if (-e $path) {
+        return $path;
+      }
+      if (-e "${path}pp") {
         return $path;
       }
     }
@@ -830,7 +864,7 @@ sub parse_body_for_extra_interfaces($$) {
 sub read_prototype {
   my $self = shift;
   my $filename = shift;
-  $filename = main::locate_file($filename);
+  $filename = main::locate_file($filename, @_);
   $self->{'filename'} = $filename;
 
   my $fh = new FileHandle("<$filename") or return undef;
@@ -1552,38 +1586,40 @@ sub preprocess {
       print STDERR "${outputfile}: NEEDS UPDATE\n";
       $self->{changes}++;
     }
-  } elsif ($self->is_changed() || ($outputfile ne $filename)) {
-    # make backup if we're running in-place, before overwriting the
-    # new file:
-    if ($outputfile eq $filename) {
-      $filename .= '.orig';
-      my $fh = new FileHandle(">${filename}") or die ("${filename}: $!");
-      print $fh $self->{src};
+  } else {
+    if ($self->is_changed() || ($outputfile ne $filename)) {
+      # make backup if we're running in-place, before overwriting the
+      # new file:
+      if ($outputfile eq $filename) {
+        $filename .= '.orig';
+        my $fh = new FileHandle(">${filename}") or die ("${filename}: $!");
+        print $fh $self->{src};
+        $fh->close();
+        $filename =~ s/.orig$//;
+      }
+
+      unlink $outputfile if (-e $outputfile);
+      my $fh = new FileHandle(">$outputfile") or die ("$outputfile: $!");
+
+      # make sure we've got a final newline:
+      $self->{text} =~ s/\n*$/\n/so;
+      print $fh $self->{text};
+
+      # add the footer to the end of the file:
+      if ((!$main::trim) && ($main::config{"enable_footer"})) {
+        print $fh "\n";
+        print $fh "/*PPSTART*/\n";
+        print $fh main::wrap("// Source file: ${filename}",
+                             "/", "/\n//    ", 70) . "\n";
+        print $fh "// preprocessed by user: " . $ENV{USER}. "\n";
+        print $fh "// preprocessed on: " . (scalar localtime time()) . "\n";
+        print $fh "/*PPSTOP*/\n";
+      }
       $fh->close();
-      $filename =~ s/.orig$//;
-    }
 
-    unlink $outputfile if (-e $outputfile);
-    my $fh = new FileHandle(">$outputfile") or die ("$outputfile: $!");
-
-    # make sure we've got a final newline:
-    $self->{text} =~ s/\n*$/\n/so;
-    print $fh $self->{text};
-
-    # add the footer to the end of the file:
-    if ((!$main::trim) && ($main::config{"enable_footer"})) {
-      print $fh "\n";
-      print $fh "/*PPSTART*/\n";
-      print $fh main::wrap("// Source file: ${filename}",
-                           "/", "/\n//    ", 70) . "\n";
-      print $fh "// preprocessed by user: " . $ENV{USER}. "\n";
-      print $fh "// preprocessed on: " . (scalar localtime time()) . "\n";
-      print $fh "/*PPSTOP*/\n";
-    }
-    $fh->close();
-
-    if ($outputfile ne $filename) {
-      chmod 0444, $outputfile;  # Set read-only to minimize accident edits.
+      if ($outputfile ne $filename) {
+        chmod 0444, $outputfile;  # Set read-only to minimize accident edits.
+      }
     }
 
     if ($self->is_changed()) {
@@ -1592,7 +1628,7 @@ sub preprocess {
       print STDERR "${outputfile}: no change.\n"
           unless $main::quieter || $main::check;
     }
-  }
+  }  # else $main::check
 
   $self->UpdateManifest();
 
@@ -1627,7 +1663,7 @@ sub recursively_process_all_dependencies {
   my $filename = shift;
   my $caller = shift;
   my $changes = 0;
-  my $path = main::locate_file($filename);
+  my $path = main::locate_file($filename, @_);
   if ((! -e $path) && (! -e "${path}pp")) {
     warn "ERROR: File \"$caller->{srcfilename}\"\n" .
          "  contains dependency on missing file \"$filename\".";
@@ -1751,6 +1787,7 @@ sub extract_iterables($) {
   } else {
     ($items, $text) = split(m/\n/, $macro, 2);
   }
+  if (!defined($text)) { $text = ""; }
 
   sub Interval {
     my $first = shift;
@@ -1855,6 +1892,11 @@ sub expand_forinst($$) {
   my ($path, $instance);
   $macro =~ s/^\s+//;
 
+  if (!defined($macro)) {
+    &main::dump_stack();
+    die "macro undefined";
+  }
+
   # turn on pretty print if --pretty is supplied.
   my $prettyprint = $main::config{"prettyprint"};
   if ($macro =~ s/^(.*)--pretty(?:print)?/$1/) {
@@ -1871,8 +1913,17 @@ sub expand_forinst($$) {
   }
 
   ($path, $instance, $macro) = split(m/\s+/, $macro, 3);
+  if (!defined($macro)) {
+    &main::dump_stack();
+    die "macro undefined";
+  }
+
   my $itemsref;
   ($macro, $itemsref) = extract_iterables($macro);
+  if (!defined($macro)) {
+    &main::dump_stack();
+    die "macro undefined";
+  }
 
   my $prototype = $self->get_prototype_from_file($path);
 
@@ -1956,14 +2007,15 @@ EOT
 sub get_prototype_from_file{
   my $self = shift;
   my $filename = shift;
+  my $curpath = File::Basename::dirname($self->{srcfilename});
 
   if ($main::recursive) {
     my $changes = recursively_process_all_dependencies(
-        $filename, $self);
+        $filename, $self, $curpath);
     $self->{changes} += $changes;
   }
 
-  my $prototype = new ModuleSpec()->read_prototype($filename);
+  my $prototype = new ModuleSpec()->read_prototype($filename, $curpath);
   if (!$prototype) {
     report_error("Could not read ${filename}: $!");
     return;
@@ -2014,6 +2066,11 @@ sub expand_instantiate_with_prototype {
   my $prettyprint = shift;
   my $compact_ports = shift;
   my $style = shift;
+
+  if (!defined($macro)) {
+    &main::dump_stack();
+    die "Undefined macro.";
+  }
 
   if (!defined($enumerator)) {
     my @digits = ($instancename =~ m/(\d+)/g);
@@ -3456,8 +3513,10 @@ sub main {
   }
 
   my $file_count = keys %main::PROCESSED;
-  print STDERR "Processed ${file_count} files and made ",
-     (($changes == 1) ? "1 change.\n" : "$changes changes.\n");
+  if (!$quieter) {
+    print STDERR "Processed ${file_count} files and made ",
+       (($changes == 1) ? "1 change.\n" : "$changes changes.\n");
+  }
 
   if ($main::check) {
     # return error if any file needed changes
