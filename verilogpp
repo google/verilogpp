@@ -172,6 +172,12 @@ sub dump_stack {
   }
 }
 
+sub log_debug {
+  if ($main::verbose > 0) {
+    print STDERR "DEBUG: @_\n";
+  }
+}
+
 # Search INCDIR for a file.
 sub locate_file {
   my $filename = shift;
@@ -632,7 +638,8 @@ sub init {
   $self->{ports} = {};
   $self->{port_order} = [];
   $self->{filename} = '';
-  $self->{assigns} = {};  # tracks assign statements
+  $self->{assigns} = {};  # tracks symbols assigned to in assign statements
+  $self->{assign_from} = {};  # tracks symbols used in assign expressions
   $self->{structs} = {};
 }
 
@@ -830,8 +837,14 @@ sub parse_body_for_extra_interfaces($$) {
 
   # scan for assign statements
   foreach my $block (@blocks) {
-    if ($block =~ m/^\s*assign\s+(\S+)\s*=/m) {
-      $self->{assigns}->{$1} = 1;
+    if ($block =~ m/^\s*assign\s+(\S+)\s*=(.*)/mso) {
+      my $to = $1;
+      my $from = $2;
+      $to =~ s/\[.*?\]//g;
+      $self->{assigns}->{$to} = 1;
+      foreach my $symbol ($from =~ m/([A-Za-z0-9_]+)/g) {
+        $self->{assign_from}->{$symbol} = 1;
+      }
     }
   }
 
@@ -1480,6 +1493,7 @@ sub run_macro($$$) {
 sub expand_macro($$) {
   my $self = shift;
   my ($label, $function) = @_;
+  main::log_debug("expanding $label");
 
   $self->{text} =~ s{(/\*\*${label}\b.*?\*/)}
    {$self->run_macro($1, $function)}egxs;
@@ -1652,7 +1666,6 @@ sub is_changed {
   return ($orig ne $self->{text});
 }
 
-
 sub report_error {
   print STDERR "ERROR: @_\n";
   print "ERROR: @_\n";
@@ -1738,6 +1751,15 @@ sub apply_mapper {
   }
 
   return $signal;
+}
+
+sub keep_track_of_assignment($$$) {
+  my $self = shift;
+  my $symbol = shift;
+  my $dir = shift;
+  if (defined($self->{NETS}->{$symbol})) {
+    $self->{NETS}->{$symbol}->CountConnection($dir);
+  }
 }
 
 sub keep_track_of_used_net {
@@ -2265,6 +2287,14 @@ sub expand_autonc($$) {
   # parse the input and output ports of this module
   my $my_interface = new ModuleSpec()->parse_prototype($self->{text});
 
+  # mark assignments
+  for my $symbol_to (keys %{$my_interface->{assigns}}) {
+    $self->keep_track_of_assignment($symbol_to, "output");
+  }
+  for my $symbol_from (keys %{$my_interface->{assign_from}}) {
+    $self->keep_track_of_assignment($symbol_from, "input");
+  }
+
   my @sigs = sort keys %{$self->{NETS}};
   foreach my $s (@sigs) {
     my $ref = $self->{NETS}->{$s};
@@ -2440,6 +2470,12 @@ sub CountAssignments {
     if (defined($self->{NETS}->{$s})) {
       my $ref = $self->{NETS}->{$s};
       $ref->CountConnection('output');
+    }
+  }
+  foreach my $s (keys %{$my_interface->{assign_from}}) {
+    if (defined($self->{NETS}->{$s})) {
+      my $ref = $self->{NETS}->{$s};
+      $ref->CountConnection('input');
     }
   }
 }
