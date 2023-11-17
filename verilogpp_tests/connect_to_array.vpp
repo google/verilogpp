@@ -26,5 +26,10 @@ drive_one sink_two (
 );
 /*PPSTOP*/
 
+/**AUTONC**/
+/*PPSTART*/
+
+/*PPSTOP*/
+
 
 endmodule : connect_to_array

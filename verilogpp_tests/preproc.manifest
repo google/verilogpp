@@ -8,8 +8,10 @@ adf4397b7b5c4594f27499fc4dd750b7  autonet_skipif.vpp
 d8bf9099c93900253867a09b87c975c1  bar.vpp
 f53ad3ace68d13b0cfa962509f7aac7e  bus_keeper.v
 875e79d3a02ca25709b43c4ec4d996e7  busthing.v
-c618cbce6095084bf196711642741165  connect_to_array.vpp
+06ac85dcf869566b67f34896f8351c15  connect_from_array.vpp
+5051d9f9ec99ea0dab3ab26e55546565  connect_to_array.vpp
 d458295df0234bb3d7dcbbc5c2d46ab6  drive_one.v
+9d4a3e8dabb67d3793081a2ad47ff869  drive_two.v
 d965329fce21a475bbd102e30793200c  foo.vpp
 9953d47357b8895179b277cbbeec420e  foreach.vpp
 58099f68bbae4cead0f4515559337e47  forinst.vpp
@@ -33,6 +35,7 @@ ac8a33665c3df3cc3c4bf0dc59175d82  multiclock.v
 cadd7d4192f7ff9e94faa7f2dde190fe  non_ansi.v
 cbf93af9a193c10198bdee6728bb5418  parameter_substitution.vpp
 a1b6387c90958d801423d77dc8c9ba8e  signed_thing.v
+3faf1ce6740e70274b260824fd6325be  sink_one.v
 bfdf1016afd58f35cf9192800ddb48ef  sink_two.v
 c549a383ecce9a0fef280d445212504d  splitlines.vpp
 1a8d1a7c8dc9c34f04cba346f62ae596  subdir/submodule.v
