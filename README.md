@@ -69,7 +69,14 @@ versions of this tool, and new code should avoid using them.
 If possible, consider configuring your editor to "fold" all code
 between the PPSTART and PPSTOP comments out of your visual field.
 
-In VIM, you could add the following to your .vimrc file:
+In VIM, the simplest way to fold generated code out of your way
+is with the following commands, suitable for adding to your
+`.vimrc` file:
+
+    set foldmarker=PPSTART,PPSTOP
+    set foldmethod=marker
+
+Or, a more complicated way:
 
     autocmd BufWinEnter,Syntax *.v,*.sv syn region ppoutput
       \ start="\/\*PPSTART\*" end="\*PPSTOP\*" fold contains=TOP keepend

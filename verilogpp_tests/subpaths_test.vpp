@@ -1,0 +1,55 @@
+/**CONFIG
+   SUBPATH=subpath
+   SUBPATH=xyzzy
+**/
+/*PPSTART*/
+
+/*PPSTOP*/
+
+
+/**INST submodule.v sub0 --pretty**/
+/*PPSTART*/
+submodule sub0 (
+   .clk                       (clk                      ) //  input
+,  .reset_n                   (reset_n                  ) //  input
+,  .dive                      (dive                     ) //  input
+,  .ascend                    (ascend                   ) //  input
+,  .fathoms_deep              (fathoms_deep             ) // output [31:0]
+);
+/*PPSTOP*/
+
+/**INST module_a.v sub0 --pretty**/
+/*PPSTART*/
+module_a sub0 (
+   .clk                       (clk                      ) //  input
+,  .reset_n                   (reset_n                  ) //  input
+,  .launch                    (launch                   ) //  input
+,  .abort                     (abort                    ) //  input
+,  .altitude                  (altitude                 ) // output [31:0]
+);
+/*PPSTOP*/
+
+/**FORINST module_a.v sub 1 2 3 **/
+/*PPSTART*/
+module_a sub_1 (
+  .clk (clk),
+  .reset_n (reset_n),
+  .launch (launch),
+  .abort (abort),
+  .altitude (altitude)
+);
+module_a sub_2 (
+  .clk (clk),
+  .reset_n (reset_n),
+  .launch (launch),
+  .abort (abort),
+  .altitude (altitude)
+);
+module_a sub_3 (
+  .clk (clk),
+  .reset_n (reset_n),
+  .launch (launch),
+  .abort (abort),
+  .altitude (altitude)
+);
+/*PPSTOP*/

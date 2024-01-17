@@ -1,0 +1,36 @@
+/**INST submodule.v sub0 --pretty**/
+/*PPSTART*/
+submodule sub0 (
+   .clk                       (clk                      ) //  input
+,  .reset_n                   (reset_n                  ) //  input
+,  .dive                      (dive                     ) //  input
+,  .ascend                    (ascend                   ) //  input
+,  .fathoms_deep              (fathoms_deep             ) // output [31:0]
+);
+/*PPSTOP*/
+
+
+/**FORINST submodule.v sub 1 2 3 **/
+/*PPSTART*/
+submodule sub_1 (
+  .clk (clk),
+  .reset_n (reset_n),
+  .dive (dive),
+  .ascend (ascend),
+  .fathoms_deep (fathoms_deep)
+);
+submodule sub_2 (
+  .clk (clk),
+  .reset_n (reset_n),
+  .dive (dive),
+  .ascend (ascend),
+  .fathoms_deep (fathoms_deep)
+);
+submodule sub_3 (
+  .clk (clk),
+  .reset_n (reset_n),
+  .dive (dive),
+  .ascend (ascend),
+  .fathoms_deep (fathoms_deep)
+);
+/*PPSTOP*/

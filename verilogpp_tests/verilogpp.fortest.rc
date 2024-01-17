@@ -6,7 +6,6 @@ extension_selects_language = 1  # use file extension to select between v2k/sv
 clock = clk
 reset_n = reset_n
 synchronous_reset = 1  # xilinx recommends synchronous reset
-use_perforce = 0
 register_delay = ""
 enable_footer = 0
 generated_code_marker = ""

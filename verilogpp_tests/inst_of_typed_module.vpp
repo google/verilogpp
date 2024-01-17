@@ -1,0 +1,40 @@
+// inst_of_typed_module instantiates a typed_module from typed_module.v
+
+module inst_of_typed_module (
+  input wire clk,
+  input wire reset_n );
+
+typedef logic [15:0] my_type_t;
+
+/**AUTONET --init **/
+/*PPSTART*/
+my_type_t fwd_data = '0;
+wire  fwd_ready;
+reg  fwd_valid = '0;
+my_type_t rev_data;
+reg  rev_ready = '0;
+wire  rev_valid;
+reg  rst_n = '0;
+/*PPSTOP*/
+
+/**INST typed_module.v typed_module  --style=v2
+* parameter TYPE_T my_type_t
+* parameter Mode 2
+**/
+/*PPSTART*/
+typed_moduled #(
+  .TYPE_T(my_type_t),
+  .Mode(2)
+) typed_module (
+  .clk,        // input
+  .rst_n,      // input
+  .fwd_data,   // input
+  .fwd_valid,  // input
+  .fwd_ready,  // output
+  .rev_data,   // output
+  .rev_valid,  // output
+  .rev_ready   // input
+);
+/*PPSTOP*/
+
+endmodule

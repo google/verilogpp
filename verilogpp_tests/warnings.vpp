@@ -24,6 +24,8 @@ reg [`HARD2PARSE_COMMAND_WORD] control_input;  // WARNING: zero drivers
 wire [`HARD2PARSE_STATUS_WORD] control_output;  // WARNING: zero load
 wire [15:0] data_to_foobar;  // WARNING: zero load
 wire  data_to_foobar_valid;  // WARNING: zero load
+reg [31:0] foo_in32;  // WARNING: zero drivers
+word_t foo_in_word;  // WARNING: zero drivers
 reg  foobar_clear_to_send;  // WARNING: zero drivers
 wire  foobar_ready_to_send;  // WARNING: zero load
 wire [31:0] in32;
@@ -100,5 +102,17 @@ hard2parse u_hard2parse (
 );
 /*PPSTOP*/
 
+/**INST bar.v u_bar9 --compact
+  s/^in/foo_in/;
+**/
+/*PPSTART*/
+bar u_bar9 (
+  .in_word (foo_in_word),
+  .clk,
+  .reset_n,
+  .in32 (foo_in32),
+  .out32
+);
+/*PPSTOP*/
 
 endmodule

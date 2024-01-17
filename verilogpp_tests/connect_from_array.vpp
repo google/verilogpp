@@ -1,0 +1,35 @@
+module connect_to_array();
+
+/**AUTONET --init **/
+/*PPSTART*/
+wire [1:0] bar;
+/*PPSTOP*/
+
+/**INST drive_two.v drive_two
+  .foo(bar)
+**/
+/*PPSTART*/
+drive_two drive_two (
+  .foo (bar)
+);
+/*PPSTOP*/
+
+/**FORINST sink_one.v sink_one 0 1
+  .foo(bar[${enumerator}])
+**/
+/*PPSTART*/
+sink_one sink_one_0 (
+  .foo (bar[0])
+);
+sink_one sink_one_1 (
+  .foo (bar[1])
+);
+/*PPSTOP*/
+
+/**AUTONC**/
+/*PPSTART*/
+
+/*PPSTOP*/
+
+
+endmodule : connect_to_array

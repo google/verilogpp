@@ -1,4 +1,4 @@
-#!/usr/bin/perl -w
+#!/usr/bin/perl
 # A verilog preprocessor.
 # Copyright 2017 Google Inc.
 # Author: jonmayer@google.com (Jonathan Mayer)
@@ -93,7 +93,9 @@ EOT
 use strict;
 use warnings;
 use 5.8.0;
+use Data::Dumper qw(Dumper);
 use English qw( -no_match_vars );
+use File::Basename;
 use File::Spec;
 use FileHandle;
 use Getopt::Long;
@@ -115,7 +117,8 @@ our $verbose = 0;
 our $quieter = 0;
 our $trim = 0;
 our $recursive = 0;
-our @INCDIR = ( $ENV{'PWD'} );
+our $PWD = $ENV{'PWD'} || `pwd`;
+our @INCDIR = ( $PWD );
 our $configfile = "";
 our $explicit_outputfile = "";
 our $check = 0;  # just check if changes are needed (dry run)
@@ -135,6 +138,7 @@ $config{"disable_always_ff"} = 0;  # disable always_ff in systemverilog code.
 $config{"register_delay"} = "#1ns";
 $config{"autonet_allwires"} = 0;
 $config{"prettyprint"} = 0; # Set to enable "pretty" generated code
+$config{"style"} = "default";
 $config{"fsm_state_suffix"} = ""; # String appended to state signals
 $config{"enable_footer"} = 1;  # writes a timestamp comment at end of each file
 $config{"depend_mode"} = 0;  # generate a dependency comment instead of `include.
@@ -142,6 +146,9 @@ $config{"generated_code_marker"} = "";  # extra indicator for generated text
 $config{"manifest"} = "";  # if set, update a manifest file when files are
                            # reprocessed.
 $config{"enum_states"} = 1;  # enumerate states by default
+$config{"compact_ports"} = 0;  # use ".clk" instead of .clk(clk)"
+$config{"omit_empty"} = 0;  # if enables, will omit empty macro expansions.
+$config{"subpaths"} = ["."];  # search these subpaths beneath each INCDIR path for files.
 
 # global md5sum registry
 our $manifest = undef;
@@ -151,6 +158,70 @@ our %PROCESSED = ();
 
 # global constants
 our $k_condition_list = "**| CONDITION LIST |**";
+
+sub dump_stack {
+  my $i = 0;
+  my ($package, $filename, $line, $subroutine, $hasargs, $wantarray, $evaltext,
+      $is_require, $hints, $bitmask, $hinthash);
+
+  print STDERR "Stack trace:\n";
+  while (($package, $filename, $line, $subroutine, $hasargs, $wantarray, $evaltext,
+      $is_require, $hints, $bitmask, $hinthash) = caller($i)) {
+    print STDERR "# ${i}: ${filename}:${line} ${subroutine}\n";
+    $i++;
+  }
+}
+
+sub log_debug {
+  if ($main::verbose > 0) {
+    print STDERR "DEBUG: @_\n";
+  }
+}
+
+# Search INCDIR for a file.
+sub locate_file {
+  my $filename = shift;
+  if (!defined($filename)) {
+    die("locate_file() called with undefined filename argument");
+  }
+  if (-e $filename) {
+    return $filename;
+  }
+  # check provided paths first, if any:
+  foreach my $dir (@_) {
+    if (!defined($dir)) {
+      # GetOptions is leaving an undefined value in this list for some reason?
+      next;
+    }
+    foreach my $subdir (@{$main::config{"subpaths"}}) {
+      my $path = File::Spec->catfile($dir, $subdir, $filename);
+      if (-e $path) {
+        return $path;
+      }
+      if (-e "${path}pp") {
+        return $path;
+      }
+    }
+  }
+  # check INCDIR paths:
+  foreach my $dir (@main::INCDIR) {
+    if (!defined($dir)) {
+      # GetOptions is leaving an undefined value in this list for some reason?
+      next;
+    }
+    foreach my $subdir (@{$main::config{"subpaths"}}) {
+      my $path = File::Spec->catfile($dir, $subdir, $filename);
+      if (-e $path) {
+        return $path;
+      }
+      if (-e "${path}pp") {
+        return $path;
+      }
+    }
+  }
+  warn("Could not find \"$filename\" in @main::INCDIR");
+  return $filename;
+}
 
 # helper functions to return the proper verilog or systemverilog
 # constructs
@@ -167,6 +238,14 @@ sub case() {
   return $config{"systemverilog"} ? "unique case" : "case";
 }
 
+sub expand_template ($\%) {
+  my $template = shift;
+  my %ctx = %{shift()};
+  my $output = $template;
+  $output =~ s/\{\{\s*([a-zA-Z0-9_]+)\s*\}\}/$ctx{$1}/g;
+  return $output;
+}
+
 # returns a correctly constructed, inferred register.
 sub register {
   my (%options) = @_;
@@ -177,6 +256,7 @@ sub register {
   my $clk = $options{"CLOCK"} || $config{"clock"};
   my $reset_n =$options{"RESET_N"} || $config{"reset_n"};
   my $delay = $options{"DELAY"} || $config{"register_delay"};
+  my $template = $config{"reg_template"} || "";
 
   my $ifclause = "";
   if ($cond ne "1'b1") {
@@ -185,6 +265,22 @@ sub register {
 
   if ($delay eq "none") { $delay = ""; }
   else { $delay =~ s/\s*$/ /; }
+
+  my %ctx = {
+    ALWAYS_FF => always_ff(),
+    CLK => $clk,
+    SRESET => $config{"synchronous_reset"},
+    RESET_N => $reset_n,
+    REG => $reg,
+    NEXT => $next,
+    DELAY => $delay,
+    INITIAL => $initial,
+    IFCLAUSE => $ifclause,
+    LE => $cond};
+
+  if ($template ne "") {
+    return expand_template($template, %ctx);
+  }
 
   return join("",
       always_ff(),
@@ -460,6 +556,12 @@ sub AsNet($$$) {
       $unpacked->[$i] =~ s/\b${key}\b/$mapper->{PARAMS}->{$key}/g;
     }
   }
+  foreach my $key (keys %{$mapper->{LOCALPARAMS}}) {
+    $width =~ s/\b${key}\b/$mapper->{LOCALPARAMS}->{$key}/g;
+    for (my $i = 0; $i <= $#{$unpacked}; $i++) {
+      $unpacked->[$i] =~ s/\b${key}\b/$mapper->{LOCALPARAMS}->{$key}/g;
+    }
+  }
   my $n = new Net($mapped_signal, $width);
   if ($#{$unpacked} >= 0) {
     $n->set_unpacked($unpacked);
@@ -536,7 +638,8 @@ sub init {
   $self->{ports} = {};
   $self->{port_order} = [];
   $self->{filename} = '';
-  $self->{assigns} = {};  # tracks assign statements
+  $self->{assigns} = {};  # tracks symbols assigned to in assign statements
+  $self->{assign_from} = {};  # tracks symbols used in assign expressions
   $self->{structs} = {};
 }
 
@@ -588,7 +691,7 @@ sub extract_module_interface($$) {
   my ($module, $parameters, $interface, $code);
   # try to match "module foo (a, b, c);"
   if ($verilog =~ m/^\s*module\s+
-                    (\S+?)\s*
+                    ([a-zA-Z0-9_]+?)\s*
                     \(\s*(.*?)\s*\)\s*;\s*
                     (.*?)
                     endmodule/xmso) {
@@ -600,7 +703,7 @@ sub extract_module_interface($$) {
   # try to match "module foo #(a, b, c) (d, e, f);"
   elsif ($verilog =~ m/
     ^\s*module\s+
-    (\S+?)\s+
+    ([a-zA-Z0-9_]+?)\s*
     \#\s*\(\s*(.*?)\s*\)\s*
     \(\s*(.*?)\s*\)\s*;\s*
     (.*?)
@@ -613,7 +716,7 @@ sub extract_module_interface($$) {
   # try to match "module foo;"
   elsif ($verilog =~ m/
     ^\s*module\s+
-    (\S+?)
+    ([a-zA-Z0-9_]+?)
     \s*;\s*
     (.*?)
     endmodule/xmso) {
@@ -694,6 +797,10 @@ sub parse_interface($$) {
       $width = '';
       shift(@tokens);
     }
+    if ($tokens[0] =~ m/^([a-zA-Z0-9_]+)\.([a-zA-Z0-9_]+)$/) {
+      $tokens[0] = $1;
+      $io = "modport $1.$2";  # a special kind of inout
+    }
     my $unpacked = [];
     while ($tokens[$#tokens] =~ m/^\[.*\]$/) {
       unshift(@$unpacked, pop(@tokens));
@@ -714,21 +821,30 @@ sub parse_interface($$) {
 }
 
 # older verilog allows inputs and outputs to be declared in the body of
-# the module.  We scan for them here.
+# the module.  We scan for them here.  This parser is a bit less featureful
+# than the verilog-2001 parser.
 sub parse_body_for_extra_interfaces($$) {
   my $self = shift;
   my $code = shift;
 
-  # remove all clocking blocks
-  $code =~ s/^clocking .*?^endclocking//gmso;
+  # remove easy to remove blocks
+  $code =~ s/^clocking .*?^endclocking(?:\s*:\s*\S+)?//gmso;
+  $code =~ s/^function .*?^endfunction(?:\s*:\s*\S+)?//gmso;
+  $code =~ s/^task .*?^endtask(?:\s*:\s*\S+)?//gmso;
 
   # scan for some old-style declarations, too:
   my @blocks = split(m/\s*;\s*/s, $code);
 
   # scan for assign statements
   foreach my $block (@blocks) {
-    if ($block =~ m/^\s*assign\s+(\S+)\s*=/m) {
-      $self->{assigns}->{$1} = 1;
+    if ($block =~ m/^\s*assign\s+(\S+)\s*=(.*)/mso) {
+      my $to = $1;
+      my $from = $2;
+      $to =~ s/\[.*?\]//g;
+      $self->{assigns}->{$to} = 1;
+      foreach my $symbol ($from =~ m/([A-Za-z0-9_]+)/g) {
+        $self->{assign_from}->{$symbol} = 1;
+      }
     }
   }
 
@@ -761,6 +877,7 @@ sub parse_body_for_extra_interfaces($$) {
 sub read_prototype {
   my $self = shift;
   my $filename = shift;
+  $filename = main::locate_file($filename, @_);
   $self->{'filename'} = $filename;
 
   my $fh = new FileHandle("<$filename") or return undef;
@@ -1145,7 +1262,7 @@ sub init {
   $self->{width} = shift;
   $self->{unpacked} = undef;
   # Count the ports this net is connected to:
-  $self->{count} = { 'input' => 0, 'output' => 0, 'inout' => 0 };
+  $self->{count} = { 'input' => 0, 'output' => 0, 'inout' => 0, 'modport' => 0 };
 }
 
 sub set_unpacked($$) {
@@ -1163,9 +1280,19 @@ sub width {
   return $self->{width};
 }
 
+sub MakeCompatibleWith($$) {
+  my $self = shift;
+  my $other_net = shift;
+  if (length($other_net->{width}) > length($self->{width})) {
+    $self->{width} = $other_net->{width};
+  }
+  if ($#{$other_net->{unpacked}} > $#{$self->{unpacked}}) { $self->{unpacked} = $other_net->{unpacked}; }
+}
+
 sub CountConnection {
   my $self = shift;
   my $dir = shift;
+  if ($dir =~ m/^modport /) { $dir = "modport"; }
   # Indicate that this signal is connected to a port of the indicated type.
   $self->{count}->{$dir} += 1;
 }
@@ -1351,7 +1478,11 @@ sub run_macro($$$) {
   }
 
   # return the expanded macro:
-  return "${text}\n/*PPSTART*/\n${result}\n/*PPSTOP*/\n";
+  if ($result =~ m/^\s*$/ && $main::config{"omit_empty"}) {
+    return "${text}";
+  } else {
+    return "${text}\n/*PPSTART*/\n${result}\n/*PPSTOP*/\n";
+  }
 }
 
 # expand_macro(label, function_ref)
@@ -1362,6 +1493,7 @@ sub run_macro($$$) {
 sub expand_macro($$) {
   my $self = shift;
   my ($label, $function) = @_;
+  main::log_debug("expanding $label");
 
   $self->{text} =~ s{(/\*\*${label}\b.*?\*/)}
    {$self->run_macro($1, $function)}egxs;
@@ -1380,6 +1512,7 @@ sub expand_all_macros {
 
   # operations
   if (!$main::trim) {
+    $self->expand_macro('CONFIG', \&expand_config);
     $self->expand_macro('FIXEDPOINT', \&expand_fixedpoint);
     $self->expand_macro('PERL', \&expand_perl);
     $self->expand_macro('EXEC', \&expand_exec);
@@ -1394,6 +1527,7 @@ sub expand_all_macros {
     $self->expand_macro('FORINST', \&expand_forinst);
     $self->expand_macro('AUTOTOSTRING', \&expand_autotostring);
     $self->expand_macro('AUTOINC', \&expand_includes);
+    $self->expand_macro('AUTONC', \&expand_autonc);
     # note: AUTOINTERFACE must expand before AUTONET, as it will change
     #       AUTONET's behavior.
     $self->expand_macro('AUTOINTERFACE', \&expand_autointerface);
@@ -1466,45 +1600,49 @@ sub preprocess {
       print STDERR "${outputfile}: NEEDS UPDATE\n";
       $self->{changes}++;
     }
-  } elsif ($self->is_changed() || ($outputfile ne $filename)) {
-    # make backup if we're running in-place, before overwriting the
-    # new file:
-    if ($outputfile eq $filename) {
-      $filename .= '.orig';
-      my $fh = new FileHandle(">${filename}") or die ("${filename}: $!");
-      print $fh $self->{src};
-      $fh->close();
-      $filename =~ s/.orig$//;
-    }
-
-    unlink $outputfile if (-e $outputfile);
-    my $fh = new FileHandle(">$outputfile") or die ("$outputfile: $!");
-
-    # make sure we've got a final newline:
-    $self->{text} =~ s/\n*$/\n/so;
-    print $fh $self->{text};
-
-    # add the footer to the end of the file:
-    if ((!$main::trim) && ($main::config{"enable_footer"})) {
-      print $fh "\n";
-      print $fh "/*PPSTART*/\n";
-      print $fh main::wrap("// Source file: ${filename}",
-                           "/", "/\n//    ", 70) . "\n";
-      print $fh "// preprocessed by user: " . $ENV{USER}. "\n";
-      print $fh "// preprocessed on: " . (scalar localtime time()) . "\n";
-      print $fh "/*PPSTOP*/\n";
-    }
-    $fh->close();
-
-    if ($outputfile ne $filename) {
-      chmod 0444, $outputfile;  # Set read-only to minimize accident edits.
-    }
-
-    print STDERR "${outputfile}: UPDATED\n";
   } else {
-    print STDERR "${outputfile}: no change.\n"
-        unless $main::quieter || $main::check;
-  }
+    if ($self->is_changed() || ($outputfile ne $filename)) {
+      # make backup if we're running in-place, before overwriting the
+      # new file:
+      if ($outputfile eq $filename) {
+        $filename .= '.orig';
+        my $fh = new FileHandle(">${filename}") or die ("${filename}: $!");
+        print $fh $self->{src};
+        $fh->close();
+        $filename =~ s/.orig$//;
+      }
+
+      unlink $outputfile if (-e $outputfile);
+      my $fh = new FileHandle(">$outputfile") or die ("$outputfile: $!");
+
+      # make sure we've got a final newline:
+      $self->{text} =~ s/\n*$/\n/so;
+      print $fh $self->{text};
+
+      # add the footer to the end of the file:
+      if ((!$main::trim) && ($main::config{"enable_footer"})) {
+        print $fh "\n";
+        print $fh "/*PPSTART*/\n";
+        print $fh main::wrap("// Source file: ${filename}",
+                             "/", "/\n//    ", 70) . "\n";
+        print $fh "// preprocessed by user: " . $ENV{USER}. "\n";
+        print $fh "// preprocessed on: " . (scalar localtime time()) . "\n";
+        print $fh "/*PPSTOP*/\n";
+      }
+      $fh->close();
+
+      if ($outputfile ne $filename) {
+        chmod 0444, $outputfile;  # Set read-only to minimize accident edits.
+      }
+    }
+
+    if ($self->is_changed()) {
+      print STDERR "${outputfile}: UPDATED\n";
+    } else {
+      print STDERR "${outputfile}: no change.\n"
+          unless $main::quieter || $main::check;
+    }
+  }  # else $main::check
 
   $self->UpdateManifest();
 
@@ -1528,7 +1666,6 @@ sub is_changed {
   return ($orig ne $self->{text});
 }
 
-
 sub report_error {
   print STDERR "ERROR: @_\n";
   print "ERROR: @_\n";
@@ -1539,7 +1676,7 @@ sub recursively_process_all_dependencies {
   my $filename = shift;
   my $caller = shift;
   my $changes = 0;
-  my $path = normalize_path($filename);
+  my $path = main::locate_file($filename, @_);
   if ((! -e $path) && (! -e "${path}pp")) {
     warn "ERROR: File \"$caller->{srcfilename}\"\n" .
          "  contains dependency on missing file \"$filename\".";
@@ -1572,6 +1709,11 @@ sub parse_instantiate_macro($$) {
   }
   $mapper->{PARAMS} = \%PARAMS;
   $mapper->{PARAM_KEYS} = \@PARAM_KEYS;
+  my %LOCALPARAMS = ();
+  while ($macro =~ s/^\s*localparam\s+(\S+)\s+(\S.*?)\s*$//mso) {
+    $LOCALPARAMS{$1} = $2;
+  }
+  $mapper->{LOCALPARAMS} = \%LOCALPARAMS;
 
   #
   # parse out overrides
@@ -1611,6 +1753,15 @@ sub apply_mapper {
   return $signal;
 }
 
+sub keep_track_of_assignment($$$) {
+  my $self = shift;
+  my $symbol = shift;
+  my $dir = shift;
+  if (defined($self->{NETS}->{$symbol})) {
+    $self->{NETS}->{$symbol}->CountConnection($dir);
+  }
+}
+
 sub keep_track_of_used_net {
   my $self = shift;
   my $prototype = shift;
@@ -1624,15 +1775,19 @@ sub keep_track_of_used_net {
   return if ($signal eq $main::config{"reset_n"});
 
   my $port = $prototype->GetPortByName($signal);
-  if (!defined($self->{NETS}->{$mapped_signal})) {
+  my $normalized_net = $mapped_signal;
+  $normalized_net =~ s/\s*\[ [^\]]* \]\s*//gx;  # strip away slice operators.
+  if (!defined($self->{NETS}->{$normalized_net})) {
     # This is the first time we've encountered this
     # wire.
-    $self->{NETS}->{$mapped_signal} = $port->AsNet($mapped_signal, $mapper);
+    $self->{NETS}->{$normalized_net} = $port->AsNet($normalized_net, $mapper);
+  } else {
+    $self->{NETS}->{$normalized_net}->MakeCompatibleWith($port->AsNet($normalized_net, $mapper));
   }
 
   # update count of loads and drivers:
   {
-    my $ref = $self->{NETS}->{$mapped_signal};
+    my $ref = $self->{NETS}->{$normalized_net};
     my $dir = $prototype->{ports}->{$signal}->io();
     $ref->CountConnection($dir);
   }
@@ -1654,6 +1809,7 @@ sub extract_iterables($) {
   } else {
     ($items, $text) = split(m/\n/, $macro, 2);
   }
+  if (!defined($text)) { $text = ""; }
 
   sub Interval {
     my $first = shift;
@@ -1758,34 +1914,59 @@ sub expand_forinst($$) {
   my ($path, $instance);
   $macro =~ s/^\s+//;
 
+  if (!defined($macro)) {
+    &main::dump_stack();
+    die "macro undefined";
+  }
+
   # turn on pretty print if --pretty is supplied.
   my $prettyprint = $main::config{"prettyprint"};
   if ($macro =~ s/^(.*)--pretty(?:print)?/$1/) {
     $prettyprint = 1;
   }
+  my $compact_ports = $main::config{"compact_ports"};
+  if ($macro =~ s/^(.*)--compact(?:_ports)?/$1/) {
+    $compact_ports = 1;
+  }
+  my $style = $main::config{"style"};
+  if ($macro =~ s/^(.*)--style=(\S+)/$1/) {
+    $style = $2;
+    if ($style eq "pretty") { $prettyprint = 1; }
+  }
 
   ($path, $instance, $macro) = split(m/\s+/, $macro, 3);
+  if (!defined($macro)) {
+    &main::dump_stack();
+    die "macro undefined";
+  }
+
   my $itemsref;
   ($macro, $itemsref) = extract_iterables($macro);
+  if (!defined($macro)) {
+    &main::dump_stack();
+    die "macro undefined";
+  }
 
   my $prototype = $self->get_prototype_from_file($path);
 
   for (my $i = 0; $i <= $#{$itemsref}; $i++) {
     my $enumerator = $itemsref->[$i];
     my $instancename = "${instance}_${enumerator}";
-    $self->expand_instantiate_with_prototype($prototype, $instancename,
-                                             $macro, $enumerator, $prettyprint);
+    $self->expand_instantiate_with_prototype(
+      $prototype, $instancename, $macro, $enumerator, $prettyprint,
+      $compact_ports, $style);
   }
 }
 
 $MacroHelp{'INST'} = <<EOT ;
-    /**INST <path> <instance>
+    /**INST <path> <instance> [<options>]
     <specifications> **/
 
 Where:
 
 * "path" is the path to the module to be instantiated.
 * "instance" is the instance name to use for the instantiation.
+* "options" is an optional list of flags.
 * "specifications" is a list of zero or more lines used to map port names
   onto signal names.  This can take a couple of different forms.
 
@@ -1800,6 +1981,17 @@ Parameters can be specified for the instantiated block like this:
 Transformation of port names onto signal names occurs by applying a
 set of transformation rules onto the port name to produce the signal
 name that port should connect to.
+
+Some modules internally define local parameters which then leak
+out of the module into the module interface.  These local localparams
+can be handled by manually computing the correct value for each
+parameter, and then overriding the symbolic name of the parameter
+in the port width.  This can be specified like this:
+
+    localparam <param-name> <param-value>
+
+Think of "localparam" as being the same as "parameter", except that a
+parameter isn't added to the "#(...)" clause of a module instantiation.
 
 The simplest transformation simply maps a port to a signal, like this:
 
@@ -1816,6 +2008,13 @@ ports of INST-instantiated submodules.  Additionally, the AUTOINTERFACE macro
 can be used to propagate unbound ports from INST-instantiated submodules to the
 module interface.
 
+Options:
+
+* --pretty  Turns on "pretty print" style (equivalent to --style=pretty).
+* --style   Sets the output style ("default", "v2", "pretty")
+* --compact Use compact naming for ports whose names match the connecting
+            signal (ie. ".clk" instead of ".clk(clk)").
+
 See also: the AUTONET, AUTOINTERFACE, and FORINST macros.
 
 Example:
@@ -1830,14 +2029,15 @@ EOT
 sub get_prototype_from_file{
   my $self = shift;
   my $filename = shift;
+  my $curpath = File::Basename::dirname($self->{srcfilename});
 
   if ($main::recursive) {
     my $changes = recursively_process_all_dependencies(
-        $filename, $self);
+        $filename, $self, $curpath);
     $self->{changes} += $changes;
   }
 
-  my $prototype = new ModuleSpec()->read_prototype($filename);
+  my $prototype = new ModuleSpec()->read_prototype($filename, $curpath);
   if (!$prototype) {
     report_error("Could not read ${filename}: $!");
     return;
@@ -1857,6 +2057,15 @@ sub expand_instantiate($$) {
   if ($macro =~ s/^(.*)--pretty(?:print)?/$1/) {
     $prettyprint = 1;
   }
+  my $compact_ports = $main::config{"compact_ports"};
+  if ($macro =~ s/^(.*)--compact(?:_ports)?/$1/) {
+    $compact_ports = 1;
+  }
+  my $style = $main::config{"style"};
+  if ($macro =~ s/^(.*)--style=(\S+)/$1/) {
+    $style = $2;
+    if ($style eq "pretty") { $prettyprint = 1; }
+  }
 
   if (!($macro =~ s/^\s*(\S+)\s+(\S+)\s*//so)) {
     report_error("Badly formatted INST macro");
@@ -1867,7 +2076,7 @@ sub expand_instantiate($$) {
   my $prototype = $self->get_prototype_from_file($filename);
 
   $self->expand_instantiate_with_prototype($prototype, $instancename, $macro,
-    undef, $prettyprint);
+    undef, $prettyprint, $compact_ports, $style);
 }
 
 sub expand_instantiate_with_prototype {
@@ -1877,6 +2086,13 @@ sub expand_instantiate_with_prototype {
   my $macro = shift;
   my $enumerator = shift;
   my $prettyprint = shift;
+  my $compact_ports = shift;
+  my $style = shift;
+
+  if (!defined($macro)) {
+    &main::dump_stack();
+    die "Undefined macro.";
+  }
 
   if (!defined($enumerator)) {
     my @digits = ($instancename =~ m/(\d+)/g);
@@ -1904,33 +2120,75 @@ sub expand_instantiate_with_prototype {
   # map ports onto signals:
   #
   my @d = ();
+  my @list_of_hookup_arrs = ();
   foreach my $signal (@signals) {
     my $mapped_signal = $self->apply_mapper($mapper, $signal, $enumerator);
 
     my $hookup;
+    my $hookup_arr = ['', '', ''];  # port, signal, comment
     my $width = $prototype->{ports}->{$signal}->width();
     # expand any Parameters within the $width expression:
     foreach my $key (keys %{$mapper->{PARAMS}}) {
       $width =~ s/\b${key}\b/$mapper->{PARAMS}->{$key}/g;
     }
+    # expand any localparams within the $width expression:
+    foreach my $key (keys %{$mapper->{LOCALPARAMS}}) {
+      $width =~ s/\b${key}\b/$mapper->{LOCALPARAMS}->{$key}/g;
+    }
+    my $dir = $prototype->{ports}->{$signal}->io();
     if ($prettyprint) {
-      my $dir = $prototype->{ports}->{$signal}->io();
       $hookup = sprintf ".%-25s (%-25s) // %6s",
           $signal, $mapped_signal, $dir;
       if ($width ne "") {
         $hookup .= " $width";
       }
     } else {
-      $hookup = ".${signal} (${mapped_signal})";
+      if (($compact_ports) && ($signal eq $mapped_signal)) {
+        $hookup = ".${signal}";
+      } else {
+        $hookup = ".${signal} (${mapped_signal})";
+      }
     }
+    if ($signal eq $mapped_signal) {
+      $hookup_arr->[0] = ".${signal},";
+      $hookup_arr->[1] = "";
+    } else {
+      $hookup_arr->[0] = ".${signal}";
+      $hookup_arr->[1] = "(${mapped_signal}),";
+    }
+    $hookup_arr->[2] = "// ${dir}";
 
     push(@d, $hookup);
+    push(@list_of_hookup_arrs, $hookup_arr);
     $self->keep_track_of_used_net($prototype, $signal, $mapped_signal, $mapper);
   }
+  # trim final comma from last port:
+  $list_of_hookup_arrs[-1]->[0] =~ s/,$//;
+  $list_of_hookup_arrs[-1]->[1] =~ s/,$//;
 
   #
   # print module instantiation
   #
+  if ($style =~ m/\bv2\b/) {
+    print "${mod} ";
+    my $first_indent = "  ";
+    my $conjunction = ",\n${first_indent}";
+    if (%{$mapper->{PARAMS}}) {
+      print "#(\n";
+      print $first_indent,
+            join($conjunction, @params),
+            "\n) ";
+    }
+    if ($#list_of_hookup_arrs >= 0) {
+      print "${instancename} (\n";
+      print $first_indent, &main::TabularAlign(\@list_of_hookup_arrs, "\n${first_indent}"),"\n);\n";
+    } else {
+      # module has no ports.
+      print "${instancename} ();\n";
+    }
+    return;
+  }
+  # default style:
   print "${mod} ";
   # When in pretty-print mode, line up commas on the left
   my $first_indent = ($prettyprint) ? "   " : "  ";
@@ -2001,6 +2259,89 @@ sub expand_includes($$) {
       print "`endif\n";
     }
     print map {'`include "' . $_ . '"'. "\n";} sort keys %unique;
+  }
+}
+
+$MacroHelp{'AUTONC'} = <<EOT ;
+AUTONC can be used to declare specific nets as no-connects.
+
+The body of this macro is a list of signal names or regular expressions to
+indicate which nets to flag as no-connects.  Signals that match and
+would otherwise be undriven or unloaded are tied off.
+
+EOT
+sub expand_autonc($$) {
+  my $self = shift;
+  my $macro = shift;
+  my @regexes = ();
+  my @names = ();
+  my @tieoffs = ();
+  my @unused = ();
+  foreach my $line (split(/\s*\n\s*/, $macro)) {
+    chomp($line);
+    if ($line =~ m/^\s*$/) {continue;}
+    if ($line =~ m/^\/(.*)\/$/) {push @regexes, $1;}
+    else {push @names, $line;}
+  }
+
+  # parse the input and output ports of this module
+  my $my_interface = new ModuleSpec()->parse_prototype($self->{text});
+
+  # mark assignments
+  for my $symbol_to (keys %{$my_interface->{assigns}}) {
+    $self->keep_track_of_assignment($symbol_to, "output");
+  }
+  for my $symbol_from (keys %{$my_interface->{assign_from}}) {
+    $self->keep_track_of_assignment($symbol_from, "input");
+  }
+
+  my @sigs = sort keys %{$self->{NETS}};
+  foreach my $s (@sigs) {
+    my $ref = $self->{NETS}->{$s};
+
+    next if ($my_interface->HasPort($s));
+    next unless ($s =~ m/^[[:alpha:]]/);
+    next if ($s =~ m/\W/);
+
+    my $found = 0;
+    if (grep(/^$s$/, @names)) {
+      $found = 1;
+    } else {
+      foreach my $re (@regexes) {
+        if ($s =~ $re) {
+          $found = 1;
+          last;
+        }
+      }
+    }
+
+    if (!$found) {next;}
+
+    if ($ref->NumberOfConnections('inout') > 0) {
+      # ignore inout signals
+    } elsif ($ref->NumberOfConnections('modport') > 0) {
+      # ignore interfaces
+    } elsif ($ref->NumberOfConnections('output') == 0) {
+      # no drivers, so assign to zero.
+      push @tieoffs, $s;
+      $ref->{count}->{output} = 1;
+    } elsif ($ref->NumberOfConnections('input') == 0) {
+      # no loads, so add to lint_unused signal list.
+      push @unused, $s;
+      $ref->{count}->{input} = 1;
+    }
+  }
+
+  if (@tieoffs) {
+    foreach my $s (@tieoffs) {
+      print "assign $s = '0;\n";
+    }
+  }
+  if (@unused) {
+    if (@tieoffs) { print "\n"; }
+    print "logic lint_unused_signals;\n";
+    print "assign lint_unused_signals =\n";
+    print "   ",join((" ||\n   ", map { "($_ == '0)" } @unused)),";\n";
   }
 }
 
@@ -2131,6 +2472,12 @@ sub CountAssignments {
       $ref->CountConnection('output');
     }
   }
+  foreach my $s (keys %{$my_interface->{assign_from}}) {
+    if (defined($self->{NETS}->{$s})) {
+      my $ref = $self->{NETS}->{$s};
+      $ref->CountConnection('input');
+    }
+  }
 }
 
 
@@ -2165,6 +2512,9 @@ annotate the generated nets with warnings if a net appears to have zero
 drivers, multiple drivers, or zero load.  Note that verilogpp does not
 fully parse verilog, so AUTONET's warnings are only accurate in designs
 that only contain expansions of INST macros.
+
+If the "--skipif" option is supplied, all signals marked as interfaces
+will be omitted from the net declarations.
 
 If the "--cb" option is supplied, verilogpp will create appropriate clocking
 blocks.  verilogpp's ideas of appropriate clocking blocks are:
@@ -2227,6 +2577,11 @@ sub expand_autonet($$) {
     $cb = 1;
   }
 
+  my $skipif = 0;
+  if ($macro =~ s/\s*--?skipifs?\s*//) {
+    $skipif = 1;
+  }
+
   # parse the input and output ports of this module
   my $my_interface = new ModuleSpec()->parse_prototype($self->{text});
   $self->CountAssignments($my_interface);
@@ -2251,6 +2606,10 @@ sub expand_autonet($$) {
     # otherwise, let's figure out what type of net it is and
     # add it to autonets list of nets:
     my $ref = $self->{NETS}->{$s};
+
+    if ($skipif && $ref->NumberOfConnections('modport') > 0) {
+      next;
+    }
 
     my $warning = "";
     if ($warn) {
@@ -2289,7 +2648,9 @@ sub expand_autonet($$) {
     # determine what to initialize the register too, if needed.
     my $assignment = "";  # empty string by default
     if ($init) {
-      if ($ref->NumberOfConnections('inout') > 0) {
+      if ($ref->NumberOfConnections('modport') > 0) {
+        $assignment = "";
+      } elsif ($ref->NumberOfConnections('inout') > 0) {
         $assignment = " = 'Z";
       } elsif ($ref->NumberOfConnections('output') == 0) {
         $assignment = " = '0";
@@ -2460,6 +2821,42 @@ sub expand_reg($$) {
 }
 
 
+$MacroHelp{'CONFIG'} = <<EOT ;
+The CONFIG macro can be used to set verilogpp configuration settings
+within a source file.  The contents of the CONFIG macro are a list
+of key=value attributes, one per line.
+
+Currently, only one attribute is supported:
+
+* "SUBPATH=<path>"
+
+This attribute can be supplied multiple times, to specific multiple subpaths.
+This subpath specifies an additional path component to be searched for files
+referred to by INST and FORINST macros.  The search is performed by iterating
+through each INCDIR path, and then looking for the file in each SUBPATH
+beneath each INCDIR path.
+
+Example:
+
+    /**CONFIG
+       SUBPATH=generated/ip/directory
+       SUBPATH=another/very/long/path/we/dont/want/to/type/over/and/over/again
+    **/
+
+EOT
+sub expand_config($$) {
+  my $self = shift;
+  my $macro = shift;
+  my @lines = split(m/\s*\n\s*/, $macro);
+  foreach my $line (@lines) {
+    my ($key, $value) = ($line =~ m/^\s*(\S+?)\s*=\s*(\S+)\s*$/);
+    if ($key eq "SUBPATH") {
+      push(@{$main::config{"subpaths"}}, $value);
+    } else {
+      report_error("ERROR: unknown config attribute $key");
+    }
+  }
+}
 $MacroHelp{'FIXEDPOINT'} = <<EOT ;
 *DEPRECATED*: please use a struct instead.
 
@@ -3111,6 +3508,7 @@ sub main {
                           "autonet_allwires" =>
                               \$main::config{"autonet_allwires"},
                           "prettyprint|p!" => \$main::config{"prettyprint"},
+                          "style=s" => \$main::config{"style"},
                           "fsm_state_suffix|f=s" =>
                               \$main::config{"fsm_state_suffix"},
                           );
@@ -3151,8 +3549,10 @@ sub main {
   }
 
   my $file_count = keys %main::PROCESSED;
-  print STDERR "Processed ${file_count} files and made ",
-     (($changes == 1) ? "1 change.\n" : "$changes changes.\n");
+  if (!$quieter) {
+    print STDERR "Processed ${file_count} files and made ",
+       (($changes == 1) ? "1 change.\n" : "$changes changes.\n");
+  }
 
   if ($main::check) {
     # return error if any file needed changes

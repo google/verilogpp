@@ -1,3 +1,13 @@
+# verilogpp regression suite
+
+## Quick Start
+
+```
+./verilogpp_files.t
+```
+
+## Overview
+
 The files in this directory are used by the verilogpp_tests.t test.
 
 All files with .vpp extensions are processed by the preprocessor to

@@ -26,6 +26,7 @@ use strict;
 use Cwd 'abs_path';
 use Test::More;
 use File::Basename;
+use lib File::Basename::dirname(abs_path($0));
 use File::Temp qw/ tempfile /;
 use test_utils;
 
@@ -39,10 +40,18 @@ $expected_tests++;
 
 # run the preprocessor over everything in the test files directory:
 my @testfiles = glob(q(./*.vpp));
+print("argv len = $#ARGV\n");
+if ($#ARGV > -1) {
+  @testfiles = @ARGV;
+}
+print "Running ",join(" ", @testfiles),"\n";
 my $rc = system($VPP,
                 "--quieter",
                 "-r",
                 "--config=./verilogpp.fortest.rc",
+                "--incdir", "./subdir",
+                "--incdir", "./notasubdir",
+                "--incdir", ".",
                 @testfiles);
 # we don't check return codes as some test files are expected to fail.
 
@@ -65,12 +74,13 @@ sub VerifyFile($) {
 sub VerifyManifest() {
   $expected_tests += 2;  # this method adds 2 checks
   ok(-e "./preproc.manifest", "preproc.manifest exists");
-  my $rc = system("diff -c -I verilogpp\$ ./preproc.manifest{.expected,}");
+  my $rc = system("diff -c -I verilogpp\$ ./preproc.manifest.expected ./preproc.manifest");
   is($rc, 0, "preproc.manifest contains expected checksums");
 }
 
 # invoke the preprocessor on these files:
 foreach my $testfile (@testfiles) {
+  print "-------\n";
   VerifyFile($testfile);
 }
 
