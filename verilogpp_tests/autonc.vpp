@@ -32,10 +32,9 @@ assign foo = '0;
 assign foo_en = '0;
 
 logic lint_unused_signals;
-assign lint_unused_signals = |{
-   another_output,
-   bar
-};
+assign lint_unused_signals =
+   (another_output == '0) ||
+   (bar == '0);
 /*PPSTOP*/
 
 

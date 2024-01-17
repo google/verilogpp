@@ -2340,8 +2340,8 @@ sub expand_autonc($$) {
   if (@unused) {
     if (@tieoffs) { print "\n"; }
     print "logic lint_unused_signals;\n";
-    print "assign lint_unused_signals = |{\n";
-    print "   ",join((",\n   ", @unused)),"\n};\n";
+    print "assign lint_unused_signals =\n";
+    print "   ",join((" ||\n   ", map { "($_ == '0)" } @unused)),";\n";
   }
 }
 
